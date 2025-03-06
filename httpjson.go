@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -81,26 +80,24 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 
 func (c *Client) decode(ctx context.Context, url string, start time.Time, resp *http.Response, out any) error {
 	defer resp.Body.Close()
-	var errs []error
-	if b, err := io.ReadAll(resp.Body); err != nil {
-		errs = append(errs, fmt.Errorf("failed to read server response: %w", err))
-	} else {
-		d := json.NewDecoder(bytes.NewReader(b))
-		d.DisallowUnknownFields()
-		if err = d.Decode(out); err != nil {
-			c.getLogger().ErrorContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "resp", string(b), "err", err)
-			errs = append(errs, fmt.Errorf("failed to decode server response: %w", err))
-		}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read server response: %w", err)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if err = d.Decode(out); err != nil {
+		err = fmt.Errorf("failed to decode server response: %w", err)
+		c.getLogger().ErrorContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "code", resp.StatusCode, "err", err)
+		// This is a REST API call failure. The data probably has an "error"
+		// field that needs to be decoded manually. Pass it to the caller.
+		return &Error{URL: url, Err: err, ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 	if resp.StatusCode >= 400 {
-		c.getLogger().ErrorContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "code", resp.StatusCode)
-		errs = append(errs, &Error{URL: url, StatusCode: resp.StatusCode, Status: resp.Status})
+		return &Error{URL: url, ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status}
 	}
-	if len(errs) == 0 {
-		c.getLogger().DebugContext(ctx, "httpjson", "url", url, "duration", time.Since(start))
-		return nil
-	}
-	return errors.Join(errs...)
+	c.getLogger().DebugContext(ctx, "httpjson", "url", url, "duration", time.Since(start))
+	return nil
 }
 
 func (c *Client) getLogger() *slog.Logger {
@@ -111,12 +108,22 @@ func (c *Client) getLogger() *slog.Logger {
 }
 
 // Error represents an HTTP request that returned an HTTP error.
+// It contains the response body if any.
 type Error struct {
-	URL        string
-	StatusCode int
-	Status     string
+	URL          string
+	Err          error
+	ResponseBody []byte
+	StatusCode   int
+	Status       string
 }
 
 func (h *Error) Error() string {
+	if h.Err != nil {
+		return h.Err.Error()
+	}
 	return h.Status
+}
+
+func (h *Error) Unwrap() error {
+	return h.Err
 }
