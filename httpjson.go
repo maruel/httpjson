@@ -6,6 +6,7 @@ package httpjson
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,23 +14,32 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/DataDog/zstd"
+	"github.com/andybalholm/brotli"
 )
 
 // HTTP client to use. For mock testing.
 type Client struct {
+	// Client defaults to http.DefaultClient.
 	Client *http.Client
+	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// DefaultHeader is the headers to add to all request. For example Authorization: Bearer.
+	DefaultHeader http.Header
+	// Compress should be empty or one of gzip, br or zstd.
+	Compress string
 
 	_ struct{}
 }
 
 // Default will use http.DefaultClient and slog.Default().
-var Default = Client{}
+var Default = Client{Compress: "gzip"}
 
 // Post simplifies doing an HTTP POST in JSON.
-func (c *Client) Post(ctx context.Context, url string, in, out any) error {
+func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out any) error {
 	start := time.Now()
-	resp, err := c.PostRequest(ctx, url, in)
+	resp, err := c.PostRequest(ctx, url, hdr, in)
 	if err != nil {
 		return err
 	}
@@ -38,7 +48,7 @@ func (c *Client) Post(ctx context.Context, url string, in, out any) error {
 
 // PostRequest simplifies doing an HTTP POST in JSON. It initiates
 // the requests and returns the response back.
-func (c *Client) PostRequest(ctx context.Context, url string, in any) (*http.Response, error) {
+func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
 	b := bytes.Buffer{}
 	e := json.NewEncoder(&b)
 	// OMG this took me a while to figure this out. This affects token encoding.
@@ -50,17 +60,17 @@ func (c *Client) PostRequest(ctx context.Context, url string, in any) (*http.Res
 	if err != nil {
 		return nil, err
 	}
-	return c.do(req)
+	return c.do(req, hdr)
 }
 
 // Get does a HTTP GET and parses the returned JSON.
-func (c *Client) Get(ctx context.Context, url string, out any) error {
+func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
 	start := time.Now()
-	resp, err := c.do(req)
+	resp, err := c.do(req, hdr)
 	if err != nil {
 		return err
 	}
@@ -69,8 +79,21 @@ func (c *Client) Get(ctx context.Context, url string, out any) error {
 
 //
 
-func (c *Client) do(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Content-Type", "application/json")
+func (c *Client) do(req *http.Request, hdr http.Header) (*http.Response, error) {
+	// The standard library includes gzip. Disable transparent compression and
+	// add br and zstd.
+	req.Header.Set("Accept-Encoding", "gzip, br, zstd")
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	for k, v := range c.DefaultHeader {
+		for _, vv := range v {
+			req.Header.Add(k, vv)
+		}
+	}
+	for k, v := range hdr {
+		for _, vv := range v {
+			req.Header.Add(k, vv)
+		}
+	}
 	client := c.Client
 	if client == nil {
 		client = http.DefaultClient
@@ -78,12 +101,43 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func (c *Client) decode(ctx context.Context, url string, start time.Time, resp *http.Response, out any) error {
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+func (c *Client) decode(ctx context.Context, url string, start time.Time, resp *http.Response, out any) (err error) {
+	defer func() {
+		if err2 := resp.Body.Close(); err == nil {
+			err = err2
+		}
+	}()
+	var body io.Reader
+	switch resp.Header.Get("Content-Encoding") {
+	case "gzip":
+		gz, err2 := gzip.NewReader(resp.Body)
+		if err2 != nil {
+			return
+		}
+		defer func() {
+			if err3 := gz.Close(); err == nil {
+				err = err3
+			}
+		}()
+		body = gz
+	case "br":
+		body = brotli.NewReader(resp.Body)
+	case "zstd":
+		zs := zstd.NewReader(resp.Body)
+		defer func() {
+			if err3 := zs.Close(); err == nil {
+				err = err3
+			}
+		}()
+		body = zs
+	default:
+		body = resp.Body
+	}
+	b, err := io.ReadAll(body)
 	if err != nil {
 		return fmt.Errorf("failed to read server response: %w", err)
 	}
+
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	// Try to decode before checking the status code.
