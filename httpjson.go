@@ -86,6 +86,7 @@ func (c *Client) decode(ctx context.Context, url string, start time.Time, resp *
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
+	// Try to decode before checking the status code.
 	if err = d.Decode(out); err != nil {
 		err = fmt.Errorf("failed to decode server response: %w", err)
 		c.getLogger().ErrorContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "code", resp.StatusCode, "err", err)
@@ -94,6 +95,7 @@ func (c *Client) decode(ctx context.Context, url string, start time.Time, resp *
 		return &Error{URL: url, Err: err, ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 	if resp.StatusCode >= 400 {
+		c.getLogger().ErrorContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "code", resp.StatusCode, "err", err)
 		return &Error{URL: url, ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 	c.getLogger().DebugContext(ctx, "httpjson", "url", url, "duration", time.Since(start))
