@@ -20,6 +20,8 @@ import (
 type Client struct {
 	Client *http.Client
 	Logger *slog.Logger
+
+	_ struct{}
 }
 
 // Default will use http.DefaultClient and slog.Default().
