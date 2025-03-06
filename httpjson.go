@@ -50,11 +50,41 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 // the requests and returns the response back.
 func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
 	b := bytes.Buffer{}
-	e := json.NewEncoder(&b)
+	var w io.Writer = &b
+	var cl io.Closer
+	switch c.Compress {
+	case "gzip":
+		gz := gzip.NewWriter(&b)
+		w = gz
+		cl = gz
+		hdr = hdr.Clone()
+		hdr.Set("Content-Encoding", "gzip")
+	case "br":
+		br := brotli.NewWriter(&b)
+		w = br
+		cl = br
+		hdr = hdr.Clone()
+		hdr.Set("Content-Encoding", "br")
+	case "zstd":
+		zs := zstd.NewWriter(&b)
+		w = zs
+		cl = zs
+		hdr = hdr.Clone()
+		hdr.Set("Content-Encoding", "zstd")
+	case "":
+	default:
+		return nil, fmt.Errorf("invalid Compress %q", c.Compress)
+	}
+	e := json.NewEncoder(w)
 	// OMG this took me a while to figure this out. This affects token encoding.
 	e.SetEscapeHTML(false)
 	if err := e.Encode(in); err != nil {
 		return nil, fmt.Errorf("internal error: %w", err)
+	}
+	if cl != nil {
+		if err := cl.Close(); err != nil {
+			return nil, fmt.Errorf("internal error: %w", err)
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &b)
 	if err != nil {
