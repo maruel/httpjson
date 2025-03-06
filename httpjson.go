@@ -57,20 +57,14 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 		gz := gzip.NewWriter(&b)
 		w = gz
 		cl = gz
-		hdr = hdr.Clone()
-		hdr.Set("Content-Encoding", "gzip")
 	case "br":
 		br := brotli.NewWriter(&b)
 		w = br
 		cl = br
-		hdr = hdr.Clone()
-		hdr.Set("Content-Encoding", "br")
 	case "zstd":
 		zs := zstd.NewWriter(&b)
 		w = zs
 		cl = zs
-		hdr = hdr.Clone()
-		hdr.Set("Content-Encoding", "zstd")
 	case "":
 	default:
 		return nil, fmt.Errorf("invalid Compress %q", c.Compress)
@@ -89,6 +83,14 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &b)
 	if err != nil {
 		return nil, err
+	}
+	if c.Compress != "" {
+		if hdr == nil {
+			hdr = make(http.Header)
+		} else {
+			hdr = hdr.Clone()
+		}
+		hdr.Set("Content-Encoding", c.Compress)
 	}
 	return c.do(req, hdr)
 }
