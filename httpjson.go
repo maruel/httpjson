@@ -19,13 +19,14 @@ import (
 	"github.com/andybalholm/brotli"
 )
 
-// HTTP client to use. For mock testing.
+// Client is a JSON REST HTTP client supporting compression and using good
+// default behavior.
 type Client struct {
 	// Client defaults to http.DefaultClient.
 	Client *http.Client
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
-	// DefaultHeader is the headers to add to all request. For example Authorization: Bearer.
+	// DefaultHeader is the headers to add to all request. For example "Authorization: Bearer 123".
 	DefaultHeader http.Header
 	// Compress should be empty or one of gzip, br or zstd.
 	Compress string
@@ -33,10 +34,13 @@ type Client struct {
 	_ struct{}
 }
 
-// Default will use http.DefaultClient and slog.Default().
-var Default = Client{Compress: "gzip"}
+// DefaultClient will use http.DefaultClient and slog.Default().
+var DefaultClient = Client{Compress: "gzip"}
 
 // Post simplifies doing an HTTP POST in JSON.
+//
+// It transparently support advanced compression.
+// It fails on unknown fields in the response.
 func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out any) error {
 	start := time.Now()
 	resp, err := c.PostRequest(ctx, url, hdr, in)
@@ -95,7 +99,10 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 	return c.do(req, hdr)
 }
 
-// Get does a HTTP GET and parses the returned JSON.
+// Get simplifies doing an HTTP GET in JSON.
+//
+// It transparently support advanced compression.
+// It fails on unknown fields in the response.
 func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -172,6 +179,7 @@ func (c *Client) decode(ctx context.Context, url string, start time.Time, resp *
 
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
+	d.UseNumber()
 	// Try to decode before checking the status code.
 	if err = d.Decode(out); err != nil {
 		err = fmt.Errorf("failed to decode server response: %w", err)
