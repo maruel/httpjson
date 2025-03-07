@@ -11,4 +11,4 @@ Defaults to fail on unknown field and use number instead of float64.
 Implemented with minimal dependencies.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/maruel/httpjson/.svg)](https://pkg.go.dev/github.com/maruel/httpjson/)
-[![codecov](https://codecov.io/gh/maruel/ask/graph/badge.svg?token=EK9DS17M02)](https://codecov.io/gh/maruel/ask)
+[![codecov](https://codecov.io/gh/maruel/httpjson/graph/badge.svg?token=EK9DS17M02)](https://codecov.io/gh/maruel/httpjson)
