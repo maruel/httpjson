@@ -19,7 +19,7 @@ import (
 	"github.com/maruel/httpjson"
 )
 
-func Example_get() {
+func ExampleClient_Get() {
 	// Compression is transparently supported, including zstd.
 	c := httpjson.DefaultClient
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,7 @@ func Example_get() {
 	// Output: Response: Comfortable
 }
 
-func Example_get_Error_with_fallback() {
+func ExampleClient_Get_error_with_fallback() {
 	c := httpjson.DefaultClient
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -91,9 +91,7 @@ func Example_get_Error_with_fallback() {
 	// Output: Error: confused
 }
 
-func Example_post() {
-	// The default client compresses POST body with gzip.
-	// Warning: It is not supported by most servers (!)
+func ExampleClient_Post() {
 	c := httpjson.DefaultClient
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -135,7 +133,7 @@ func Example_post() {
 	// Output: Response: Comfortable
 }
 
-func Example_postRequest() {
+func ExampleClient_PostRequest() {
 	c := httpjson.DefaultClient
 	// Disable compression if the server doesn't support compressed POST. That's
 	// sadly most of them.

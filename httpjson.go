@@ -34,7 +34,11 @@ type Client struct {
 	_ struct{}
 }
 
-// DefaultClient will use http.DefaultClient and slog.Default().
+// DefaultClient uses http.DefaultClient and slog.Default().
+//
+// It compresses POST body with gzip.
+//
+// Warning ⚠: It is not supported by most servers (!)
 var DefaultClient = Client{Compress: "gzip"}
 
 // Post simplifies doing an HTTP POST in JSON.
