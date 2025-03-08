@@ -221,7 +221,7 @@ type Error struct {
 }
 
 func (h *Error) Error() string {
-	return h.Status
+	return fmt.Sprintf("http %d: %s", h.StatusCode, h.Status)
 }
 
 type body struct {
