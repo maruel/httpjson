@@ -8,7 +8,7 @@ Augments the standard library's implementation with compression 🚀 (upload wit
 gzip) and decompression (gzip, br, zstd). The standard library only support
 decompression of gzip.
 
-Enforce no unknown reponse field. Expose function to handle fallback response
+Enforce no unknown response field. Expose function to handle fallback response
 schemas, e.g. in case of errors.
 
 Implemented with minimal dependencies.

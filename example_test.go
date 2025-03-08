@@ -144,7 +144,7 @@ func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
 		Question string `json:"question"`
 	}
 	var out any
-	if err := json.NewDecoder(gz).Decode(&in); err != nil {
+	if err = json.NewDecoder(gz).Decode(&in); err != nil {
 		out = map[string]string{"error": err.Error()}
 	} else {
 		out = serverRespondQuestion(in.Question)
@@ -205,7 +205,10 @@ func ExampleClient_PostRequest() {
 	h.Set("Authentication", "Bearer 123")
 	in := map[string]string{"question": "weather"}
 	resp, err := c.PostRequest(ctx, ts.URL, h, in)
-
+	if err != nil {
+		fmt.Printf("Error: %s\n", err)
+		return
+	}
 	// Useful to stream the response. This is also useful if you want to allow
 	// unknown fields.
 	var out struct {
