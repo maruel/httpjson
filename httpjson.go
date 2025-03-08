@@ -2,6 +2,7 @@
 // Use of this source code is governed under the Apache License, Version 2.0
 // that can be found in the LICENSE file.
 
+// Package httpjson is a deceptively simple JSON REST HTTP client.
 package httpjson
 
 import (
@@ -9,11 +10,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/DataDog/zstd"
 	"github.com/andybalholm/brotli"
@@ -24,8 +24,6 @@ import (
 type Client struct {
 	// Client defaults to http.DefaultClient.
 	Client *http.Client
-	// Logger defaults to slog.Default().
-	Logger *slog.Logger
 	// DefaultHeader is the headers to add to all request. For example "Authorization: Bearer 123".
 	DefaultHeader http.Header
 	// Compress should be empty or one of gzip, br or zstd.
@@ -34,28 +32,54 @@ type Client struct {
 	_ struct{}
 }
 
-// DefaultClient uses http.DefaultClient and slog.Default().
+// DefaultClient uses http.DefaultClient.
 //
 // It compresses POST body with gzip.
 //
-// Warning ⚠: It is not supported by most servers (!)
+// Warning ⚠: compressing POST content with gzip is not supported by most servers (!)
 var DefaultClient = Client{Compress: "gzip"}
+
+// Get simplifies doing an HTTP GET in JSON.
+//
+// It transparently support advanced compression.
+// It fails on unknown fields in the response.
+func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
+	resp, err := c.GetRequest(ctx, url, hdr)
+	if err == nil {
+		_, err = DecodeResponse(resp, out)
+	}
+	return err
+}
+
+// GetRequest simplifies doing an HTTP POST in JSON.
+//
+// It initiates the requests and returns the response back for further processing.
+// The result is transparently decompressed.
+func (c *Client) GetRequest(ctx context.Context, url string, hdr http.Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.Do(req, hdr)
+}
 
 // Post simplifies doing an HTTP POST in JSON.
 //
 // It transparently support advanced compression.
 // It fails on unknown fields in the response.
 func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out any) error {
-	start := time.Now()
 	resp, err := c.PostRequest(ctx, url, hdr, in)
 	if err != nil {
 		return err
 	}
-	return c.decode(ctx, url, start, resp, out)
+	_, err = DecodeResponse(resp, out)
+	return err
 }
 
-// PostRequest simplifies doing an HTTP POST in JSON. It initiates
-// the requests and returns the response back.
+// PostRequest simplifies doing an HTTP POST in JSON.
+//
+// It initiates the requests and returns the response back for further processing.
+// The result is transparently decompressed.
 func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
 	b := bytes.Buffer{}
 	var w io.Writer = &b
@@ -75,7 +99,7 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 		cl = zs
 	case "":
 	default:
-		return nil, fmt.Errorf("invalid Compress %q", c.Compress)
+		return nil, fmt.Errorf("invalid Compress value: %q", c.Compress)
 	}
 	e := json.NewEncoder(w)
 	// OMG this took me a while to figure this out. This affects token encoding.
@@ -100,130 +124,122 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 		}
 		hdr.Set("Content-Encoding", c.Compress)
 	}
-	return c.do(req, hdr)
+	return c.Do(req, hdr)
 }
 
-// Get simplifies doing an HTTP GET in JSON.
-//
-// It transparently support advanced compression.
-// It fails on unknown fields in the response.
-func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return err
-	}
-	start := time.Now()
-	resp, err := c.do(req, hdr)
-	if err != nil {
-		return err
-	}
-	return c.decode(ctx, url, start, resp, out)
-}
-
-//
-
-func (c *Client) do(req *http.Request, hdr http.Header) (*http.Response, error) {
+// Do sets the correct headers and transparently decompresses the response.
+func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) {
 	// The standard library includes gzip. Disable transparent compression and
 	// add br and zstd.
 	req.Header.Set("Accept-Encoding", "gzip, br, zstd")
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	for k, v := range c.DefaultHeader {
-		for _, vv := range v {
-			req.Header.Add(k, vv)
+		switch len(v) {
+		case 0:
+			req.Header.Del(k)
+		case 1:
+			req.Header.Set(k, v[0])
+		default:
+			for _, vv := range v {
+				req.Header.Add(k, vv)
+			}
 		}
 	}
 	for k, v := range hdr {
-		for _, vv := range v {
-			req.Header.Add(k, vv)
+		switch len(v) {
+		case 0:
+			req.Header.Del(k)
+		case 1:
+			req.Header.Set(k, v[0])
+		default:
+			for _, vv := range v {
+				req.Header.Add(k, vv)
+			}
 		}
 	}
 	client := c.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if resp != nil {
+		switch resp.Header.Get("Content-Encoding") {
+		case "br":
+			resp.Body = &body{r: brotli.NewReader(resp.Body), c: []io.Closer{resp.Body}}
+		case "gzip":
+			gz, err2 := gzip.NewReader(resp.Body)
+			if err2 != nil {
+				return resp, errors.Join(err2, err)
+			}
+			resp.Body = &body{r: gz, c: []io.Closer{resp.Body, gz}}
+		case "zstd":
+			zs := zstd.NewReader(resp.Body)
+			resp.Body = &body{r: zs, c: []io.Closer{resp.Body, zs}}
+		}
+	}
+	return resp, err
 }
 
-func (c *Client) decode(ctx context.Context, url string, start time.Time, resp *http.Response, out any) (err error) {
-	defer func() {
-		if err2 := resp.Body.Close(); err == nil {
-			err = err2
-		}
-	}()
-	var body io.Reader
-	switch resp.Header.Get("Content-Encoding") {
-	case "gzip":
-		gz, err2 := gzip.NewReader(resp.Body)
-		if err2 != nil {
-			return
-		}
-		defer func() {
-			if err3 := gz.Close(); err == nil {
-				err = err3
-			}
-		}()
-		body = gz
-	case "br":
-		body = brotli.NewReader(resp.Body)
-	case "zstd":
-		zs := zstd.NewReader(resp.Body)
-		defer func() {
-			if err3 := zs.Close(); err == nil {
-				err = err3
-			}
-		}()
-		body = zs
-	default:
-		body = resp.Body
-	}
-	b, err := io.ReadAll(body)
+// DecodeResponse parses the response body as JSON, trying strict decoding for each of
+// the output struct passed in, falling back as the decoding fails.
+//
+// Returns the index of which output structured was decoded along joined errors
+// for both json decode failure (*json.UnmarshalTypeError, *json.SyntaxError,
+// *json.InvalidUnmarshalError) and HTTP status code (*httpjson.Error).
+//
+// It buffers the output in memory.
+func DecodeResponse(resp *http.Response, out ...any) (int, error) {
+	res := -1
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read server response: %w", err)
+		return res, fmt.Errorf("failed to read server response: %w", err)
 	}
-
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.DisallowUnknownFields()
-	d.UseNumber()
-	// Try to decode before checking the status code.
-	if err = d.Decode(out); err != nil {
-		err = fmt.Errorf("failed to decode server response: %w", err)
-		c.getLogger().ErrorContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "code", resp.StatusCode, "err", err, "hdr", resp.Header)
-		// This is a REST API call failure. The data probably has an "error"
-		// field that needs to be decoded manually. Pass it to the caller.
-		return &Error{URL: url, Err: err, ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status}
+	var errs []error
+	for i := range out {
+		d := json.NewDecoder(bytes.NewReader(b))
+		d.DisallowUnknownFields()
+		d.UseNumber()
+		if err = d.Decode(out[i]); err == nil {
+			res = i
+			break
+		}
+		errs = append(errs, fmt.Errorf("failed to decode server response option #%d as type %T: %w", i, out[i], err))
 	}
-	if resp.StatusCode >= 400 {
-		c.getLogger().ErrorContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "code", resp.StatusCode, "err", err, "hdr", resp.Header)
-		return &Error{URL: url, ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status}
+	if len(errs) != 0 || resp.StatusCode >= 400 {
+		// Include the body in case of error.
+		errs = append(errs, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status})
 	}
-	c.getLogger().DebugContext(ctx, "httpjson", "url", url, "duration", time.Since(start), "hdr", resp.Header)
-	return nil
-}
-
-func (c *Client) getLogger() *slog.Logger {
-	if c.Logger != nil {
-		return c.Logger
-	}
-	return slog.Default()
+	return res, errors.Join(errs...)
 }
 
 // Error represents an HTTP request that returned an HTTP error.
 // It contains the response body if any.
 type Error struct {
-	URL          string
-	Err          error
 	ResponseBody []byte
 	StatusCode   int
 	Status       string
 }
 
 func (h *Error) Error() string {
-	if h.Err != nil {
-		return h.Err.Error()
-	}
 	return h.Status
 }
 
-func (h *Error) Unwrap() error {
-	return h.Err
+type body struct {
+	r io.Reader
+	c []io.Closer
+}
+
+func (b *body) Read(p []byte) (n int, err error) {
+	return b.r.Read(p)
+}
+
+func (b *body) Close() error {
+	var errs []error
+	// Close in reverse order.
+	for i := len(b.c) - 1; i >= 0; i-- {
+		if err := b.c[i].Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }

@@ -5,120 +5,170 @@
 package httpjson_test
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/DataDog/zstd"
 	"github.com/maruel/httpjson"
 )
 
-func ExampleClient_Get() {
-	// Compression is transparently supported, including zstd.
-	c := httpjson.DefaultClient
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func acceptCompressed(r *http.Request, want string) bool {
+	for encoding := range strings.SplitSeq(r.Header.Get("Accept-Encoding"), ",") {
+		if strings.TrimSpace(encoding) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// serverRespondQuestion is an example of a server API implementation that
+// returns different structure based on the input. That happens frequently in
+// servers implemented with dynamic languages (python, ruby, nodejs, etc).
+func serverRespondQuestion(question string) any {
+	switch question {
+	case "weather":
+		return map[string]string{"message": "Comfortable"}
+	default:
+		return map[string]string{"error": "I only answer weather questions", "got": question}
+	}
+}
+
+func handleGetCompressed(w http.ResponseWriter, r *http.Request) {
+	if !acceptCompressed(r, "zstd") {
+		http.Error(w, "sorry, I only talk zstd", http.StatusBadRequest)
+		return
+	}
+	out := serverRespondQuestion(r.URL.Query().Get("question"))
+	data, err := json.Marshal(out)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Encoding", "zstd")
+	if raw, err := zstd.Compress(nil, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	} else {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		// Simplified version, server should adapt according to the client's "Accept-Encoding".
-		w.Header().Set("Content-Encoding", "zstd")
-		z := zstd.NewWriter(w)
-		if _, err := z.Write([]byte(`{"message": "Comfortable"}`)); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		if _, err = w.Write(raw); err != nil {
+			slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
 		}
-		if err := z.Close(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}))
+	}
+}
+
+func ExampleClient_Get() {
+	// Compression is transparently supported!
+	ts := httptest.NewServer(http.HandlerFunc(handleGetCompressed))
 	defer ts.Close()
 
-	ctx := context.Background()
 	var out struct {
 		Message string `json:"message"`
 	}
-	if err := c.Get(ctx, ts.URL, nil, &out); err != nil {
-		log.Fatal(err)
+	if err := httpjson.DefaultClient.Get(context.Background(), ts.URL+"?question=weather", nil, &out); err != nil {
+		// Handle various kinds of errors.
+		var herr *httpjson.Error
+		if errors.As(err, &herr) {
+			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
+		}
+		var jerr *json.SyntaxError
+		if errors.As(err, &jerr) {
+			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
+		}
+		// Print the error as a generic error.
+		fmt.Printf("Error: %s\n", err)
+		return
 	}
+
 	fmt.Printf("Response: %s\n", out.Message)
 	// Output: Response: Comfortable
 }
 
-func ExampleClient_Get_error_with_fallback() {
-	c := httpjson.DefaultClient
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error": {"detail":"confused"}}`))
-	}))
+func ExampleClient_GetRequest() {
+	ts := httptest.NewServer(http.HandlerFunc(handleGetCompressed))
 	defer ts.Close()
 
-	ctx := context.Background()
 	var out struct {
 		Message string `json:"message"`
 	}
-	if err := c.Get(ctx, ts.URL, nil, &out); err != nil {
-		if err, ok := err.(*httpjson.Error); ok {
-			// Decode a fallback.
-			if err.StatusCode == http.StatusBadRequest {
-				var err2 struct {
-					Error struct {
-						Detail string `json:"detail"`
-					} `json:"error"`
-				}
-				d := json.NewDecoder(bytes.NewReader(err.ResponseBody))
-				d.DisallowUnknownFields()
-				if err := d.Decode(&err2); err == nil {
-					// This is the final code path taken to handle the structured server error response.
-					fmt.Printf("Error: %s\n", err2.Error.Detail)
-				} else {
-					log.Fatal(err)
-				}
-			} else {
-				log.Fatal(err)
-			}
-		} else {
-			log.Fatal("unexpected")
-		}
-	} else {
-		log.Fatal("unexpected")
+	var fallback struct {
+		Error string `json:"error"`
+		Got   string `json:"got"`
 	}
-	// Output: Error: confused
+	resp, err := httpjson.DefaultClient.GetRequest(context.Background(), ts.URL+"?question=life", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	i, err := httpjson.DecodeResponse(resp, &out, &fallback)
+	switch i {
+	case 0:
+		fmt.Printf("Success case: %s\n", out.Message)
+	case 1:
+		fmt.Printf("Fallback: %s\n", fallback.Error)
+	case -1:
+		// No decoding happened. Handle various kinds of errors.
+		var herr *httpjson.Error
+		if errors.As(err, &herr) {
+			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
+		}
+		var jerr *json.SyntaxError
+		if errors.As(err, &jerr) {
+			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
+		}
+		fmt.Printf("Error: %s\n", err)
+	}
+	// Output: Fallback: I only answer weather questions
+}
+
+func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Content-Encoding") != "gzip" {
+		http.Error(w, "expected gzip", http.StatusBadRequest)
+		return
+	}
+	if !acceptCompressed(r, "zstd") {
+		http.Error(w, "sorry, I only talk zstd", http.StatusBadRequest)
+		return
+	}
+	gz, err := gzip.NewReader(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var in struct {
+		Question string `json:"question"`
+	}
+	var out any
+	if err := json.NewDecoder(gz).Decode(&in); err != nil {
+		out = map[string]string{"error": err.Error()}
+	} else {
+		out = serverRespondQuestion(in.Question)
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	raw, err := zstd.Compress(nil, data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Encoding", "zstd")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if _, err = w.Write(raw); err != nil {
+		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
+	}
 }
 
 func ExampleClient_Post() {
 	c := httpjson.DefaultClient
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		// Simplified version, server should adapt according to the client's request.
-		if r.Header.Get("Content-Encoding") != "gzip" {
-			http.Error(w, "expected gzip", http.StatusBadRequest)
-			return
-		}
-		gz, err := gzip.NewReader(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		in := map[string]string{}
-		if err := json.NewDecoder(gz).Decode(&in); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if in["question"] != "weather" {
-			http.Error(w, "expected question=weather", http.StatusBadRequest)
-			return
-		}
-		if _, err := w.Write([]byte(`{"message": "Comfortable"}`)); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}))
+	ts := httptest.NewServer(http.HandlerFunc(handlePostCompressed))
 	defer ts.Close()
 
 	ctx := context.Background()
@@ -127,7 +177,8 @@ func ExampleClient_Post() {
 	in := map[string]string{"question": "weather"}
 	out := map[string]string{}
 	if err := c.Post(ctx, ts.URL, h, in, &out); err != nil {
-		log.Fatal(err)
+		fmt.Printf("Error: %s\n", err)
+		return
 	}
 	fmt.Printf("Response: %s\n", out["message"])
 	// Output: Response: Comfortable
@@ -139,9 +190,13 @@ func ExampleClient_PostRequest() {
 	// sadly most of them.
 	c.Compress = ""
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"message": "Comfortable"}`))
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if req := r.Header.Get("Authentication"); req != "Bearer AAA" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error": "Unauthorized"}`))
+		} else {
+			_, _ = w.Write([]byte(`{"message": "Comfortable"}`))
+		}
 	}))
 	defer ts.Close()
 
@@ -150,24 +205,32 @@ func ExampleClient_PostRequest() {
 	h.Set("Authentication", "Bearer 123")
 	in := map[string]string{"question": "weather"}
 	resp, err := c.PostRequest(ctx, ts.URL, h, in)
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	// Useful to stream the response. This is also useful if you want to allow
 	// unknown fields.
-	defer resp.Body.Close()
-	out := map[string]string{}
-	d := json.NewDecoder(resp.Body)
-	d.DisallowUnknownFields()
-	d.UseNumber()
-	if err := d.Decode(&out); err != nil {
-		log.Fatal(err)
+	var out struct {
+		Message string `json:"message"`
 	}
-	fmt.Printf("Response: %s\n", out["message"])
-	// Output: Response: Comfortable
-}
-
-func init() {
-	// slog.SetLogLoggerLevel(slog.LevelDebug)
-	slog.SetDefault(slog.New(slog.DiscardHandler))
+	var fallback struct {
+		Error string `json:"error"`
+	}
+	i, err := httpjson.DecodeResponse(resp, &out, &fallback)
+	switch i {
+	case 0:
+		fmt.Printf("Success case: %s\n", out.Message)
+	case 1:
+		fmt.Printf("Structured Error: %s\n", fallback.Error)
+	case -1:
+		// No decoding happened. Handle various kinds of errors.
+		var herr *httpjson.Error
+		if errors.As(err, &herr) {
+			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
+		}
+		var jerr *json.SyntaxError
+		if errors.As(err, &jerr) {
+			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
+		}
+		fmt.Printf("Error: %s\n", err)
+	}
+	// Output: Structured Error: Unauthorized
 }

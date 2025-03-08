@@ -1,12 +1,15 @@
 # httpjson
 
-Reduces repetitive code for making HTTP requests and parsing JSON responses!
+Magically ✨ handles HTTP JSON requests especially for backends implemented in
+dynamic languages (python, ruby, nodejs, etc) that do not have normalized
+structured response schema.
 
-Augment the standard library's implementation with compression (upload with
+Augments the standard library's implementation with compression 🚀 (upload with
 gzip) and decompression (gzip, br, zstd). The standard library only support
 decompression of gzip.
 
-Defaults to fail on unknown field and use number instead of float64.
+Enforce no unknown reponse field. Expose function to handle fallback response
+schemas, e.g. in case of errors.
 
 Implemented with minimal dependencies.
 
