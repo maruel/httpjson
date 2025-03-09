@@ -26,18 +26,16 @@ type Client struct {
 	Client *http.Client
 	// DefaultHeader is the headers to add to all request. For example "Authorization: Bearer 123".
 	DefaultHeader http.Header
-	// Compress should be empty or one of gzip, br or zstd.
-	Compress string
+	// PostCompress determines HTTP POST compression. It must be empty or one of: "gzip", "br" or "zstd".
+	//
+	// Warning ⚠: compressing POST content is not supported on most servers.
+	PostCompress string
 
 	_ struct{}
 }
 
-// DefaultClient uses http.DefaultClient.
-//
-// It compresses POST body with gzip.
-//
-// Warning ⚠: compressing POST content with gzip is not supported by most servers (!)
-var DefaultClient = Client{Compress: "gzip"}
+// DefaultClient uses http.DefaultClient and does no compression.
+var DefaultClient = Client{}
 
 // Get simplifies doing an HTTP GET in JSON.
 //
@@ -84,7 +82,7 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 	b := bytes.Buffer{}
 	var w io.Writer = &b
 	var cl io.Closer
-	switch c.Compress {
+	switch c.PostCompress {
 	case "gzip":
 		gz := gzip.NewWriter(&b)
 		w = gz
@@ -99,7 +97,7 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 		cl = zs
 	case "":
 	default:
-		return nil, fmt.Errorf("invalid Compress value: %q", c.Compress)
+		return nil, fmt.Errorf("invalid PostCompress value: %q", c.PostCompress)
 	}
 	e := json.NewEncoder(w)
 	// OMG this took me a while to figure this out. This affects token encoding.
@@ -116,13 +114,13 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 	if err != nil {
 		return nil, err
 	}
-	if c.Compress != "" {
+	if c.PostCompress != "" {
 		if hdr == nil {
 			hdr = make(http.Header)
 		} else {
 			hdr = hdr.Clone()
 		}
-		hdr.Set("Content-Encoding", c.Compress)
+		hdr.Set("Content-Encoding", c.PostCompress)
 	}
 	return c.Do(req, hdr)
 }
