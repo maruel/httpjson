@@ -220,8 +220,9 @@ type Error struct {
 	Status       string
 }
 
+// Error implements error, returning "http <status code>".
 func (h *Error) Error() string {
-	return fmt.Sprintf("http %d: %s", h.StatusCode, h.Status)
+	return fmt.Sprintf("http %d", h.StatusCode)
 }
 
 type body struct {
