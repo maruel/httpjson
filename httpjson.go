@@ -41,6 +41,7 @@ var DefaultClient = Client{}
 //
 // It transparently support advanced compression.
 // It fails on unknown fields in the response.
+// Buffers response body in memory.
 func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
 	resp, err := c.GetRequest(ctx, url, hdr)
 	if err == nil {
@@ -65,6 +66,7 @@ func (c *Client) GetRequest(ctx context.Context, url string, hdr http.Header) (*
 //
 // It transparently support advanced compression.
 // It fails on unknown fields in the response.
+// Buffers both post data and response body in memory.
 func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out any) error {
 	resp, err := c.PostRequest(ctx, url, hdr, in)
 	if err != nil {
@@ -78,6 +80,7 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 //
 // It initiates the requests and returns the response back for further processing.
 // The result is transparently decompressed.
+// Buffers post data in memory.
 func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
 	b := bytes.Buffer{}
 	var w io.Writer = &b
@@ -186,7 +189,7 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 // *json.InvalidUnmarshalError) and HTTP status code (*httpjson.Error). Returns
 // -1 as the index if no output was decoded.
 //
-// It buffers the output in memory.
+// Buffers response body in memory.
 func DecodeResponse(resp *http.Response, out ...any) (int, error) {
 	res := -1
 	b, err := io.ReadAll(resp.Body)
