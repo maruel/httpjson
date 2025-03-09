@@ -183,7 +183,8 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 //
 // Returns the index of which output structured was decoded along joined errors
 // for both json decode failure (*json.UnmarshalTypeError, *json.SyntaxError,
-// *json.InvalidUnmarshalError) and HTTP status code (*httpjson.Error).
+// *json.InvalidUnmarshalError) and HTTP status code (*httpjson.Error). Returns
+// -1 as the index if no output was decoded.
 //
 // It buffers the output in memory.
 func DecodeResponse(resp *http.Response, out ...any) (int, error) {
