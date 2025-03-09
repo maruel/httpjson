@@ -167,7 +167,6 @@ func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
 }
 
 func ExampleClient_Post() {
-	c := httpjson.DefaultClient
 	ts := httptest.NewServer(http.HandlerFunc(handlePostCompressed))
 	defer ts.Close()
 
@@ -176,6 +175,9 @@ func ExampleClient_Post() {
 	h.Set("Authentication", "Bearer 123")
 	in := map[string]string{"question": "weather"}
 	out := map[string]string{}
+	// Transparently compress HTTP POST content.
+	c := httpjson.DefaultClient
+	c.PostCompress = "gzip"
 	if err := c.Post(ctx, ts.URL, h, in, &out); err != nil {
 		fmt.Printf("Error: %s\n", err)
 		return
@@ -185,10 +187,6 @@ func ExampleClient_Post() {
 }
 
 func ExampleClient_PostRequest() {
-	c := httpjson.DefaultClient
-	// Disable compression if the server doesn't support compressed POST. That's
-	// sadly most of them.
-	c.Compress = ""
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if req := r.Header.Get("Authentication"); req != "Bearer AAA" {
@@ -204,7 +202,7 @@ func ExampleClient_PostRequest() {
 	h := http.Header{}
 	h.Set("Authentication", "Bearer 123")
 	in := map[string]string{"question": "weather"}
-	resp, err := c.PostRequest(ctx, ts.URL, h, in)
+	resp, err := httpjson.DefaultClient.PostRequest(ctx, ts.URL, h, in)
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		return
