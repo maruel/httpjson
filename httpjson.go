@@ -113,6 +113,7 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 			return nil, fmt.Errorf("internal error: %w", err)
 		}
 	}
+	// slog.InfoContext(ctx, "httpjson", "url", url, "data", b.String())
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &b)
 	if err != nil {
 		return nil, err
@@ -164,7 +165,9 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 	}
 	resp, err := client.Do(req)
 	if resp != nil {
-		switch resp.Header.Get("Content-Encoding") {
+		ce := resp.Header.Get("Content-Encoding")
+		// slog.InfoContext(req.Context(), "httpjson", "url", req.URL.String(), "status", resp.Status, "content-encoding", ce)
+		switch ce {
 		case "br":
 			resp.Body = &body{r: brotli.NewReader(resp.Body), c: []io.Closer{resp.Body}}
 		case "gzip":
@@ -210,6 +213,7 @@ func DecodeResponse(resp *http.Response, out ...any) (int, error) {
 	if len(errs) != 0 || resp.StatusCode >= 400 {
 		// Include the body in case of error.
 		errs = append(errs, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status})
+		// slog.Error("httpjson", "status", resp.Status, "body", string(b))
 	}
 	return res, errors.Join(errs...)
 }
