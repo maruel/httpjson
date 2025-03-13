@@ -16,7 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/DataDog/zstd"
+	"github.com/klauspost/compress/zstd"
 	"github.com/maruel/httpjson"
 )
 
@@ -53,13 +53,17 @@ func handleGetCompressed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Encoding", "zstd")
-	if raw, err := zstd.Compress(nil, data); err != nil {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	c, err := zstd.NewWriter(w)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-	} else {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if _, err = w.Write(raw); err != nil {
-			slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
-		}
+		return
+	}
+	if _, err = c.Write(data); err != nil {
+		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
+	}
+	if err = c.Close(); err != nil {
+		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
 	}
 }
 
@@ -154,14 +158,17 @@ func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	raw, err := zstd.Compress(nil, data)
+	w.Header().Set("Content-Encoding", "zstd")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	c, err := zstd.NewWriter(w)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Encoding", "zstd")
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if _, err = w.Write(raw); err != nil {
+	if _, err = c.Write(data); err != nil {
+		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
+	}
+	if err = c.Close(); err != nil {
 		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
 	}
 }

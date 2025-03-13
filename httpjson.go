@@ -15,8 +15,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/DataDog/zstd"
 	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 )
 
 // Client is a JSON REST HTTP client supporting compression and using good
@@ -95,7 +95,10 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 		w = br
 		cl = br
 	case "zstd":
-		zs := zstd.NewWriter(&b)
+		zs, err := zstd.NewWriter(&b)
+		if err != nil {
+			return nil, err
+		}
 		w = zs
 		cl = zs
 	case "":
@@ -177,8 +180,11 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 			}
 			resp.Body = &body{r: gz, c: []io.Closer{resp.Body, gz}}
 		case "zstd":
-			zs := zstd.NewReader(resp.Body)
-			resp.Body = &body{r: zs, c: []io.Closer{resp.Body, zs}}
+			zs, err2 := zstd.NewReader(resp.Body)
+			if err2 != nil {
+				return resp, errors.Join(err2, err)
+			}
+			resp.Body = &body{r: zs, c: []io.Closer{resp.Body}}
 		}
 	}
 	return resp, err
