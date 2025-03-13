@@ -217,9 +217,8 @@ func DecodeResponse(resp *http.Response, out ...any) (int, error) {
 		errs = append(errs, fmt.Errorf("failed to decode server response option #%d as type %T: %w", i, out[i], err))
 	}
 	if len(errs) != 0 || resp.StatusCode >= 400 {
-		// Include the body in case of error.
-		errs = append(errs, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status})
-		// slog.Error("httpjson", "status", resp.Status, "body", string(b))
+		// Include the body in case of error so the user can diagnose.
+		errs = append(errs, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status, PrintBody: len(errs) != 0})
 	}
 	return res, errors.Join(errs...)
 }
@@ -230,11 +229,16 @@ type Error struct {
 	ResponseBody []byte
 	StatusCode   int
 	Status       string
+	PrintBody    bool
 }
 
 // Error implements error, returning "http <status code>".
 func (h *Error) Error() string {
-	return fmt.Sprintf("http %d", h.StatusCode)
+	out := fmt.Sprintf("http %d", h.StatusCode)
+	if h.PrintBody {
+		out += "\n" + string(h.ResponseBody)
+	}
+	return out
 }
 
 type body struct {
