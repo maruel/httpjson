@@ -11,6 +11,8 @@ normalized structured response schema.
   decompression of gzip.
 - Enforces no unknown response field.
 - Exposes functions to gracefully handle fallback response schemas, e.g. in case of errors.
+- Supports `context.Context` for cancellation.
+- Supports `http.Client` for custom configuration, like recording or custom logging.
 - Implemented with minimal dependencies.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/maruel/httpjson/.svg)](https://pkg.go.dev/github.com/maruel/httpjson/)
