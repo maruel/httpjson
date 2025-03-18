@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/maruel/httpjson"
@@ -241,4 +242,37 @@ func ExampleClient_PostRequest() {
 		fmt.Printf("Error: %s\n", err)
 	}
 	// Output: Structured Error: Unauthorized
+}
+
+func ExampleHook_logging() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"message": "Working"}`))
+	}))
+	defer ts.Close()
+
+	var out struct {
+		Message string `json:"message"`
+	}
+	c := httpjson.Client{
+		Client: &httpjson.Hook{
+			Client: http.DefaultClient,
+			OnRequest: func(req *http.Request) {
+				// Use req.Context() if needed.
+				fmt.Printf("OnRequest: %s\n", req.Method)
+			},
+			OnResponse: func(req *http.Request, start time.Time, resp *http.Response, err error) {
+				// Use req.Context() if needed.
+				fmt.Printf("OnResponse: %s\n", resp.Status)
+			},
+		},
+	}
+	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Response: %s\n", out.Message)
+	// Output:
+	// OnRequest: GET
+	// OnResponse: 200 OK
+	// Response: Working
 }

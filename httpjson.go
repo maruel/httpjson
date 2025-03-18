@@ -29,7 +29,7 @@ type HTTPClient interface {
 
 // Hook is an HTTPClient that provides a hook for all requests and responses.
 type Hook struct {
-	Parent     *http.Client
+	Client     *http.Client
 	OnRequest  func(req *http.Request)
 	OnResponse func(req *http.Request, start time.Time, resp *http.Response, err error)
 }
@@ -37,7 +37,7 @@ type Hook struct {
 func (h *Hook) Do(req *http.Request) (*http.Response, error) {
 	h.OnRequest(req)
 	start := time.Now()
-	resp, err := h.Parent.Do(req)
+	resp, err := h.Client.Do(req)
 	h.OnResponse(req, start, resp, err)
 	return resp, err
 }
