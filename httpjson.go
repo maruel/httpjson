@@ -14,16 +14,39 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 
+// HTTPClient is an http.Client compatible interface.
+//
+// It can be used for either recording, mocking or logging.
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// Hook is an HTTPClient that provides a hook for all requests and responses.
+type Hook struct {
+	Parent     *http.Client
+	OnRequest  func(req *http.Request)
+	OnResponse func(req *http.Request, start time.Time, resp *http.Response, err error)
+}
+
+func (h *Hook) Do(req *http.Request) (*http.Response, error) {
+	h.OnRequest(req)
+	start := time.Now()
+	resp, err := h.Parent.Do(req)
+	h.OnResponse(req, start, resp, err)
+	return resp, err
+}
+
 // Client is a JSON REST HTTP client supporting compression and using good
 // default behavior.
 type Client struct {
 	// Client defaults to http.DefaultClient.
-	Client *http.Client
+	Client HTTPClient
 	// DefaultHeader is the headers to add to all request. For example "Authorization: Bearer 123".
 	DefaultHeader http.Header
 	// PostCompress determines HTTP POST compression. It must be empty or one of: "gzip", "br" or "zstd".
