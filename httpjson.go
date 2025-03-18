@@ -14,39 +14,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 
-// HTTPClient is an http.Client compatible interface.
-//
-// It can be used for either recording, mocking or logging.
-type HTTPClient interface {
-	Do(req *http.Request) (*http.Response, error)
-}
-
-// Hook is an HTTPClient that provides a hook for all requests and responses.
-type Hook struct {
-	Client     *http.Client
-	OnRequest  func(req *http.Request)
-	OnResponse func(req *http.Request, start time.Time, resp *http.Response, err error)
-}
-
-func (h *Hook) Do(req *http.Request) (*http.Response, error) {
-	h.OnRequest(req)
-	start := time.Now()
-	resp, err := h.Client.Do(req)
-	h.OnResponse(req, start, resp, err)
-	return resp, err
-}
-
 // Client is a JSON REST HTTP client supporting compression and using good
 // default behavior.
 type Client struct {
 	// Client defaults to http.DefaultClient.
-	Client HTTPClient
+	Client *http.Client
 	// DefaultHeader is the headers to add to all request. For example "Authorization: Bearer 123".
 	DefaultHeader http.Header
 	// PostCompress determines HTTP POST compression. It must be empty or one of: "gzip", "br" or "zstd".
@@ -213,8 +190,9 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 	return resp, err
 }
 
-// DecodeResponse parses the response body as JSON, trying strict decoding for each of
-// the output struct passed in, falling back as the decoding fails.
+// DecodeResponse parses the response body as JSON, trying strict decoding for
+// each of the output struct passed in, falling back as the decoding fails. It
+// then closes the response body.
 //
 // Returns the index of which output structured was decoded along joined errors
 // for both json decode failure (*json.UnmarshalTypeError, *json.SyntaxError,
@@ -225,6 +203,9 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 func DecodeResponse(resp *http.Response, out ...any) (int, error) {
 	res := -1
 	b, err := io.ReadAll(resp.Body)
+	if err2 := resp.Body.Close(); err == nil {
+		err = err2
+	}
 	if err != nil {
 		return res, fmt.Errorf("failed to read server response: %w", err)
 	}

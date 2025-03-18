@@ -5,17 +5,18 @@
 package httpjson_test
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/maruel/httpjson"
@@ -244,7 +245,42 @@ func ExampleClient_PostRequest() {
 	// Output: Structured Error: Unauthorized
 }
 
-func ExampleHook_logging() {
+type loggingRoundTripper struct{}
+
+func (l loggingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	fmt.Printf("OnRequest: %s\n", r.Method)
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		fmt.Printf("OnResponse: %s\n", err)
+	} else {
+		fmt.Printf("OnResponse: %s; CT:%s\n", resp.Status, resp.Header.Get("Content-Type"))
+		resp.Body = &loggingBody{r: resp.Body}
+	}
+	return resp, err
+}
+
+type loggingBody struct {
+	r io.ReadCloser
+	b bytes.Buffer
+}
+
+func (l *loggingBody) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	if n > 0 {
+		_, _ = l.b.Write(p[:n])
+	}
+	return n, err
+}
+
+func (l *loggingBody) Close() error {
+	err := l.r.Close()
+	fmt.Printf("Body: %q\n", l.b.String())
+	return err
+}
+
+func ExampleClient_logging() {
+	// Example on how to hook into the HTTP client roundtripper to do logging of
+	// each HTTP request.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"message": "Working"}`))
@@ -255,17 +291,7 @@ func ExampleHook_logging() {
 		Message string `json:"message"`
 	}
 	c := httpjson.Client{
-		Client: &httpjson.Hook{
-			Client: http.DefaultClient,
-			OnRequest: func(req *http.Request) {
-				// Use req.Context() if needed.
-				fmt.Printf("OnRequest: %s\n", req.Method)
-			},
-			OnResponse: func(req *http.Request, start time.Time, resp *http.Response, err error) {
-				// Use req.Context() if needed.
-				fmt.Printf("OnResponse: %s\n", resp.Status)
-			},
-		},
+		Client: &http.Client{Transport: loggingRoundTripper{}},
 	}
 	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
 		log.Fatal(err)
@@ -273,6 +299,7 @@ func ExampleHook_logging() {
 	fmt.Printf("Response: %s\n", out.Message)
 	// Output:
 	// OnRequest: GET
-	// OnResponse: 200 OK
+	// OnResponse: 200 OK; CT:application/json; charset=utf-8
+	// Body: "{\"message\": \"Working\"}"
 	// Response: Working
 }
