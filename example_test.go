@@ -261,7 +261,6 @@ func genID() string {
 }
 
 func (l *LoggingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	// Print something deterministic to stdout for the test to capture:
 	fmt.Printf("OnRequest: %s\n", r.Method)
 	ctx := r.Context()
 	start := time.Now()
@@ -275,7 +274,6 @@ func (l *LoggingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error)
 		ce := resp.Header.Get("Content-Encoding")
 		cl := resp.Header.Get("Content-Length")
 		ct := resp.Header.Get("Content-Type")
-		// Print something deterministic to stdout for the test to capture:
 		fmt.Printf("OnResponse: %q; Content-Encoding: %q Content-Length: %q Content-Type: %q\n", resp.Status, ce, cl, ct)
 		ll.InfoContext(ctx, "http", "duration", time.Since(start), "status", resp.StatusCode, "Content-Encoding", ce, "Content-Length", cl, "Content-Type", ct)
 		resp.Body = &loggingBody{r: resp.Body, ctx: ctx, start: start, l: ll}
@@ -289,20 +287,18 @@ type loggingBody struct {
 	start time.Time
 	l     *slog.Logger
 
-	n   int64
-	b   bytes.Buffer
-	err error
+	responseSize    int64
+	responseContent bytes.Buffer
+	err             error
 }
 
 func (l *loggingBody) Read(p []byte) (int, error) {
 	n, err := l.r.Read(p)
 	if n > 0 {
-		l.n += int64(n)
-		// Warning: normally you wouldn't want to capture the whole response and
-		// instead capture the number of bytes written.
-		_, _ = l.b.Write(p[:n])
+		l.responseSize += int64(n)
+		_, _ = l.responseContent.Write(p[:n])
 	}
-	if err != nil && l.err == nil {
+	if err != nil && err != io.EOF && l.err == nil {
 		l.err = err
 	}
 	return n, err
@@ -313,12 +309,11 @@ func (l *loggingBody) Close() error {
 	if err != nil && l.err == nil {
 		l.err = err
 	}
-	// Print something deterministic to stdout for the test to capture:
-	fmt.Printf("Body: %q\n", l.b.String())
-	if l.err != nil && l.err != io.EOF {
-		l.l.ErrorContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.n, "err", l.err)
+	fmt.Printf("Body: %q  err=%v\n", l.responseContent.String(), err)
+	if l.err != nil {
+		l.l.ErrorContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.responseSize, "err", l.err)
 	} else {
-		l.l.InfoContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.n)
+		l.l.InfoContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.responseSize)
 	}
 	return err
 }
@@ -332,14 +327,20 @@ func ExampleClient_logging() {
 	}))
 	defer ts.Close()
 
+	// Unsolicited recommendation for CLI tools: github.com/lmittmann/tint along
+	// with github.com/mattn/go-colorable is great for console output.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// LoggingRoundTripper prints deterministic information to stdout for the
+	// test to capture. Remove the fmt.Printf() calls in production.
+	//
+	// It captures all of the response body in memory, which is not recommended
+	// for large responses. Remove loggingBody.responseContent if you don't need the body.
+	t := &LoggingRoundTripper{R: http.DefaultTransport, L: logger}
+	c := httpjson.Client{Client: &http.Client{Transport: t}}
+
 	var out struct {
 		Message string `json:"message"`
-	}
-	// Recommendation: github.com/lmittmann/tint along with
-	// github.com/mattn/go-colorable is great for console output.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	c := httpjson.Client{
-		Client: &http.Client{Transport: &LoggingRoundTripper{R: http.DefaultTransport, L: logger}},
 	}
 	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
 		log.Fatal(err)
@@ -348,6 +349,6 @@ func ExampleClient_logging() {
 	// Output:
 	// OnRequest: GET
 	// OnResponse: "200 OK"; Content-Encoding: "" Content-Length: "22" Content-Type: "application/json; charset=utf-8"
-	// Body: "{\"message\": \"Working\"}"
+	// Body: "{\"message\": \"Working\"}"  err=<nil>
 	// Response: "Working"
 }
