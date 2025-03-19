@@ -22,7 +22,8 @@ import (
 // Client is a JSON REST HTTP client supporting compression and using good
 // default behavior.
 type Client struct {
-	// Client defaults to http.DefaultClient.
+	// Client defaults to http.DefaultClient. Overridde to add logging on each
+	// HTTP request. See the Logging example.
 	Client *http.Client
 	// DefaultHeader is the headers to add to all request. For example "Authorization: Bearer 123".
 	DefaultHeader http.Header
@@ -106,7 +107,7 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 		return nil, fmt.Errorf("invalid PostCompress value: %q", c.PostCompress)
 	}
 	e := json.NewEncoder(w)
-	// OMG this took me a while to figure this out. This affects token encoding.
+	// OMG this took me a while to figure this out. This affects LLM token encoding.
 	e.SetEscapeHTML(false)
 	if err := e.Encode(in); err != nil {
 		return nil, fmt.Errorf("internal error: %w", err)
@@ -116,7 +117,6 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 			return nil, fmt.Errorf("internal error: %w", err)
 		}
 	}
-	// slog.InfoContext(ctx, "httpjson", "url", url, "data", b.String())
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &b)
 	if err != nil {
 		return nil, err
@@ -135,8 +135,8 @@ func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, i
 // Do sets the correct headers and transparently decompresses the response.
 func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) {
 	// The standard library includes gzip. Disable transparent compression and
-	// add br and zstd.
-	req.Header.Set("Accept-Encoding", "gzip, br, zstd")
+	// add br and zstd. Tell the server we prefer zstd.
+	req.Header.Set("Accept-Encoding", "zstd, br, gzip")
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	for k, v := range c.DefaultHeader {
 		switch len(v) {
@@ -169,7 +169,6 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 	resp, err := client.Do(req)
 	if resp != nil {
 		ce := resp.Header.Get("Content-Encoding")
-		// slog.InfoContext(req.Context(), "httpjson", "url", req.URL.String(), "status", resp.Status, "content-encoding", ce)
 		switch ce {
 		case "br":
 			resp.Body = &body{r: brotli.NewReader(resp.Body), c: []io.Closer{resp.Body}}

@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +18,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/maruel/httpjson"
@@ -245,36 +249,77 @@ func ExampleClient_PostRequest() {
 	// Output: Structured Error: Unauthorized
 }
 
-type loggingRoundTripper struct{}
+type LoggingRoundTripper struct {
+	R http.RoundTripper
+	L *slog.Logger
+}
 
-func (l loggingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+func genID() string {
+	var bytes [12]byte
+	rand.Read(bytes[:])
+	return base64.RawURLEncoding.EncodeToString(bytes[:])
+}
+
+func (l *LoggingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	// Print something deterministic to stdout for the test to capture:
 	fmt.Printf("OnRequest: %s\n", r.Method)
-	resp, err := http.DefaultTransport.RoundTrip(r)
+	ctx := r.Context()
+	start := time.Now()
+	ll := l.L.With("id", genID())
+	ll.DebugContext(ctx, "http", "url", r.URL.String(), "method", r.Method, "Content-Encoding", r.Header.Get("Content-Encoding"))
+	resp, err := l.R.RoundTrip(r)
 	if err != nil {
-		fmt.Printf("OnResponse: %s\n", err)
+		fmt.Printf("OnResponse: %q\n", err)
+		ll.ErrorContext(ctx, "http", "duration", time.Since(start), "err", err)
 	} else {
-		fmt.Printf("OnResponse: %s; CT:%s\n", resp.Status, resp.Header.Get("Content-Type"))
-		resp.Body = &loggingBody{r: resp.Body}
+		ce := resp.Header.Get("Content-Encoding")
+		cl := resp.Header.Get("Content-Length")
+		ct := resp.Header.Get("Content-Type")
+		// Print something deterministic to stdout for the test to capture:
+		fmt.Printf("OnResponse: %q; Content-Encoding: %q Content-Length: %q Content-Type: %q\n", resp.Status, ce, cl, ct)
+		ll.InfoContext(ctx, "http", "duration", time.Since(start), "status", resp.StatusCode, "Content-Encoding", ce, "Content-Length", cl, "Content-Type", ct)
+		resp.Body = &loggingBody{r: resp.Body, ctx: ctx, start: start, l: ll}
 	}
 	return resp, err
 }
 
 type loggingBody struct {
-	r io.ReadCloser
-	b bytes.Buffer
+	r     io.ReadCloser
+	ctx   context.Context
+	start time.Time
+	l     *slog.Logger
+
+	n   int64
+	b   bytes.Buffer
+	err error
 }
 
 func (l *loggingBody) Read(p []byte) (int, error) {
 	n, err := l.r.Read(p)
 	if n > 0 {
+		l.n += int64(n)
+		// Warning: normally you wouldn't want to capture the whole response and
+		// instead capture the number of bytes written.
 		_, _ = l.b.Write(p[:n])
+	}
+	if err != nil && l.err == nil {
+		l.err = err
 	}
 	return n, err
 }
 
 func (l *loggingBody) Close() error {
 	err := l.r.Close()
+	if err != nil && l.err == nil {
+		l.err = err
+	}
+	// Print something deterministic to stdout for the test to capture:
 	fmt.Printf("Body: %q\n", l.b.String())
+	if l.err != nil && l.err != io.EOF {
+		l.l.ErrorContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.n, "err", l.err)
+	} else {
+		l.l.InfoContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.n)
+	}
 	return err
 }
 
@@ -290,16 +335,19 @@ func ExampleClient_logging() {
 	var out struct {
 		Message string `json:"message"`
 	}
+	// Recommendation: github.com/lmittmann/tint along with
+	// github.com/mattn/go-colorable is great for console output.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	c := httpjson.Client{
-		Client: &http.Client{Transport: loggingRoundTripper{}},
+		Client: &http.Client{Transport: &LoggingRoundTripper{R: http.DefaultTransport, L: logger}},
 	}
 	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Response: %s\n", out.Message)
+	fmt.Printf("Response: %q\n", out.Message)
 	// Output:
 	// OnRequest: GET
-	// OnResponse: 200 OK; CT:application/json; charset=utf-8
+	// OnResponse: "200 OK"; Content-Encoding: "" Content-Length: "22" Content-Type: "application/json; charset=utf-8"
 	// Body: "{\"message\": \"Working\"}"
-	// Response: Working
+	// Response: "Working"
 }
