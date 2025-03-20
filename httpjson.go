@@ -31,6 +31,13 @@ type Client struct {
 	//
 	// Warning ⚠: compressing POST content is not supported on most servers.
 	PostCompress string
+	// Lenient allows unknown fields in the response.
+	//
+	// This inhibits from calling DisallowUnknownFields() on the JSON decoder.
+	//
+	// Use this in production so that your client doesn't break when the server
+	// add new fields.
+	Lenient bool
 
 	_ struct{}
 }
@@ -45,10 +52,10 @@ var DefaultClient = Client{}
 // Buffers response body in memory.
 func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
 	resp, err := c.GetRequest(ctx, url, hdr)
-	if err == nil {
-		_, err = DecodeResponse(resp, out)
+	if err != nil {
+		return err
 	}
-	return err
+	return c.decodeResponse(resp, out)
 }
 
 // GetRequest simplifies doing an HTTP POST in JSON.
@@ -73,8 +80,7 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 	if err != nil {
 		return err
 	}
-	_, err = DecodeResponse(resp, out)
-	return err
+	return c.decodeResponse(resp, out)
 }
 
 // PostRequest simplifies doing an HTTP POST in JSON.
@@ -183,10 +189,20 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 			if err2 != nil {
 				return resp, errors.Join(err2, err)
 			}
-			resp.Body = &body{r: zs, c: []io.Closer{resp.Body}}
+			resp.Body = &body{r: zs, c: []io.Closer{resp.Body, &adapter{zs}}}
 		}
 	}
 	return resp, err
+}
+
+type adapter struct {
+	zs *zstd.Decoder
+}
+
+func (a *adapter) Close() error {
+	// zstd.Decoder doesn't implement io.Closer. :/
+	a.zs.Close()
+	return nil
 }
 
 // DecodeResponse parses the response body as JSON, trying strict decoding for
@@ -224,6 +240,22 @@ func DecodeResponse(resp *http.Response, out ...any) (int, error) {
 		errs = append(errs, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status, PrintBody: len(errs) != 0})
 	}
 	return res, errors.Join(errs...)
+}
+
+func (c *Client) decodeResponse(resp *http.Response, out any) error {
+	b, err := io.ReadAll(resp.Body)
+	if err2 := resp.Body.Close(); err == nil {
+		err = err2
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read server response: %w", err)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	if !c.Lenient {
+		d.DisallowUnknownFields()
+	}
+	d.UseNumber()
+	return d.Decode(out)
 }
 
 // Error represents an HTTP request that returned an HTTP error.

@@ -5,22 +5,15 @@
 package httpjson_test
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/maruel/httpjson"
@@ -65,12 +58,8 @@ func handleGetCompressed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if _, err = c.Write(data); err != nil {
-		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
-	}
-	if err = c.Close(); err != nil {
-		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
-	}
+	_, _ = c.Write(data)
+	_ = c.Close()
 }
 
 func ExampleClient_Get() {
@@ -121,6 +110,10 @@ func ExampleClient_GetRequest() {
 		fmt.Printf("Success case: %s\n", out.Message)
 	case 1:
 		fmt.Printf("Fallback: %s\n", fallback.Error)
+		var herr *httpjson.Error
+		if errors.As(err, &herr) {
+			fmt.Printf("httpjson.Error: %v", herr)
+		}
 	case -1:
 		// No decoding happened. Handle various kinds of errors.
 		var herr *httpjson.Error
@@ -133,7 +126,10 @@ func ExampleClient_GetRequest() {
 		}
 		fmt.Printf("Error: %s\n", err)
 	}
-	// Output: Fallback: I only answer weather questions
+	// Output:
+	// Fallback: I only answer weather questions
+	// httpjson.Error: http 200
+	// {"error":"I only answer weather questions","got":"life"}
 }
 
 func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
@@ -171,12 +167,8 @@ func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if _, err = c.Write(data); err != nil {
-		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
-	}
-	if err = c.Close(); err != nil {
-		slog.WarnContext(r.Context(), "http", "req", "r", "err", err)
-	}
+	_, _ = c.Write(data)
+	_ = c.Close()
 }
 
 func ExampleClient_Post() {
@@ -247,108 +239,4 @@ func ExampleClient_PostRequest() {
 		fmt.Printf("Error: %s\n", err)
 	}
 	// Output: Structured Error: Unauthorized
-}
-
-type LoggingRoundTripper struct {
-	R http.RoundTripper
-	L *slog.Logger
-}
-
-func genID() string {
-	var bytes [12]byte
-	rand.Read(bytes[:])
-	return base64.RawURLEncoding.EncodeToString(bytes[:])
-}
-
-func (l *LoggingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	fmt.Printf("OnRequest: %s\n", r.Method)
-	ctx := r.Context()
-	start := time.Now()
-	ll := l.L.With("id", genID())
-	ll.DebugContext(ctx, "http", "url", r.URL.String(), "method", r.Method, "Content-Encoding", r.Header.Get("Content-Encoding"))
-	resp, err := l.R.RoundTrip(r)
-	if err != nil {
-		fmt.Printf("OnResponse: %q\n", err)
-		ll.ErrorContext(ctx, "http", "duration", time.Since(start), "err", err)
-	} else {
-		ce := resp.Header.Get("Content-Encoding")
-		cl := resp.Header.Get("Content-Length")
-		ct := resp.Header.Get("Content-Type")
-		fmt.Printf("OnResponse: %q; Content-Encoding: %q Content-Length: %q Content-Type: %q\n", resp.Status, ce, cl, ct)
-		ll.InfoContext(ctx, "http", "duration", time.Since(start), "status", resp.StatusCode, "Content-Encoding", ce, "Content-Length", cl, "Content-Type", ct)
-		resp.Body = &loggingBody{r: resp.Body, ctx: ctx, start: start, l: ll}
-	}
-	return resp, err
-}
-
-type loggingBody struct {
-	r     io.ReadCloser
-	ctx   context.Context
-	start time.Time
-	l     *slog.Logger
-
-	responseSize    int64
-	responseContent bytes.Buffer
-	err             error
-}
-
-func (l *loggingBody) Read(p []byte) (int, error) {
-	n, err := l.r.Read(p)
-	if n > 0 {
-		l.responseSize += int64(n)
-		_, _ = l.responseContent.Write(p[:n])
-	}
-	if err != nil && err != io.EOF && l.err == nil {
-		l.err = err
-	}
-	return n, err
-}
-
-func (l *loggingBody) Close() error {
-	err := l.r.Close()
-	if err != nil && l.err == nil {
-		l.err = err
-	}
-	fmt.Printf("Body: %q  err=%v\n", l.responseContent.String(), err)
-	if l.err != nil {
-		l.l.ErrorContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.responseSize, "err", l.err)
-	} else {
-		l.l.InfoContext(l.ctx, "http", "duration", time.Since(l.start), "size", l.responseSize)
-	}
-	return err
-}
-
-func ExampleClient_logging() {
-	// Example on how to hook into the HTTP client roundtripper to do logging of
-	// each HTTP request.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"message": "Working"}`))
-	}))
-	defer ts.Close()
-
-	// Unsolicited recommendation for CLI tools: github.com/lmittmann/tint along
-	// with github.com/mattn/go-colorable is great for console output.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	// LoggingRoundTripper prints deterministic information to stdout for the
-	// test to capture. Remove the fmt.Printf() calls in production.
-	//
-	// It captures all of the response body in memory, which is not recommended
-	// for large responses. Remove loggingBody.responseContent if you don't need the body.
-	t := &LoggingRoundTripper{R: http.DefaultTransport, L: logger}
-	c := httpjson.Client{Client: &http.Client{Transport: t}}
-
-	var out struct {
-		Message string `json:"message"`
-	}
-	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("Response: %q\n", out.Message)
-	// Output:
-	// OnRequest: GET
-	// OnResponse: "200 OK"; Content-Encoding: "" Content-Length: "22" Content-Type: "application/json; charset=utf-8"
-	// Body: "{\"message\": \"Working\"}"  err=<nil>
-	// Response: "Working"
 }
