@@ -7,12 +7,13 @@ implemented in dynamic languages (python, ruby, nodejs, etc) that do not have
 normalized structured response schema.
 
 - Augments the standard library's implementation with upload compression 🚀 and
-  add brotli and zstd decompression. The standard library only support
-  decompression of gzip.
+  add [brotli](https://caniuse.com/?search=brotli) and
+  [zstd](https://caniuse.com/?search=zstd) decompression. The standard library
+  only support decompression of [gzip](https://caniuse.com/?search=gzip).
 - Enforces no unknown response field by default.
 - Exposes functions to gracefully handle fallback response schemas, e.g. in case of errors.
 - Supports `context.Context` for cancellation.
-- Supports `http.Client` for custom configuration, like recording or custom logging.
+- Supports `http.Client` for custom configuration, like recording or custom logging!
   - See package [roundtrippers](https://pkg.go.dev/github.com/maruel/httpjson/roundtrippers) for implementations
 - Implemented with minimal dependencies.
 - Good code coverage.
