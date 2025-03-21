@@ -54,6 +54,9 @@ func ExampleAcceptCompressed_br() {
 	}
 	b, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Printf("Response: %q\n", string(b))
 	// Output:
 	// Response: "excellent"
@@ -84,6 +87,9 @@ func ExampleAcceptCompressed_gzip() {
 	}
 	b, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Printf("Response: %q\n", string(b))
 	// Output:
 	// Response: "excellent"
@@ -118,6 +124,9 @@ func ExampleAcceptCompressed_zstd() {
 	}
 	b, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Printf("Response: %q\n", string(b))
 	// Output:
 	// Response: "excellent"
@@ -152,6 +161,9 @@ func ExampleLog() {
 	}
 	b, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Printf("Response: %q\n", string(b))
 	// Output:
 	// level=INFO msg=http method=GET Content-Encoding=""

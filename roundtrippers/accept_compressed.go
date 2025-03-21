@@ -39,7 +39,7 @@ func (a *AcceptCompressed) RoundTrip(req *http.Request) (*http.Response, error) 
 		case "gzip":
 			gz, err2 := gzip.NewReader(resp.Body)
 			if err2 != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return nil, errors.Join(err2, err)
 			}
 			resp.Body = &body{r: gz, c: []io.Closer{resp.Body, gz}}
@@ -49,7 +49,7 @@ func (a *AcceptCompressed) RoundTrip(req *http.Request) (*http.Response, error) 
 		case "zstd":
 			zs, err2 := zstd.NewReader(resp.Body)
 			if err2 != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return nil, errors.Join(err2, err)
 			}
 			resp.Body = &body{r: zs, c: []io.Closer{resp.Body, &adapter{zs}}}
@@ -58,7 +58,7 @@ func (a *AcceptCompressed) RoundTrip(req *http.Request) (*http.Response, error) 
 			resp.Uncompressed = true
 		case "", "identity":
 		default:
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("unsupported Content-Encoding %q", ce)
 		}
 	}
