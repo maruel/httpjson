@@ -5,24 +5,129 @@
 package roundtrippers_test
 
 import (
-	"context"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 
-	"github.com/maruel/httpjson"
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 	"github.com/maruel/httpjson/roundtrippers"
 )
+
+func acceptCompressed(r *http.Request, want string) bool {
+	for encoding := range strings.SplitSeq(r.Header.Get("Accept-Encoding"), ",") {
+		if strings.TrimSpace(encoding) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func ExampleAcceptCompressed_br() {
+	// Example on how to hook into the HTTP client roundtripper to enable zstd and brotli.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !acceptCompressed(r, "br") {
+			http.Error(w, "sorry, I only talk br", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Encoding", "br")
+		c := brotli.NewWriter(w)
+		_, _ = c.Write([]byte("excellent"))
+		if err := c.Close(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer ts.Close()
+
+	t := &roundtrippers.AcceptCompressed{Transport: http.DefaultTransport}
+	c := http.Client{Transport: t}
+	resp, err := c.Get(ts.URL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	b, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	fmt.Printf("Response: %q\n", string(b))
+	// Output:
+	// Response: "excellent"
+}
+
+func ExampleAcceptCompressed_gzip() {
+	// Example on how to hook into the HTTP client roundtripper to enable zstd and brotli.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !acceptCompressed(r, "gzip") {
+			http.Error(w, "sorry, I only talk gzip", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		c := gzip.NewWriter(w)
+		_, _ = c.Write([]byte("excellent"))
+		if err := c.Close(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer ts.Close()
+
+	t := &roundtrippers.AcceptCompressed{Transport: http.DefaultTransport}
+	c := http.Client{Transport: t}
+	resp, err := c.Get(ts.URL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	b, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	fmt.Printf("Response: %q\n", string(b))
+	// Output:
+	// Response: "excellent"
+}
+
+func ExampleAcceptCompressed_zstd() {
+	// Example on how to hook into the HTTP client roundtripper to enable zstd and brotli.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !acceptCompressed(r, "zstd") {
+			http.Error(w, "sorry, I only talk zstd", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Encoding", "zstd")
+		c, err := zstd.NewWriter(w)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = c.Write([]byte("excellent"))
+		if err = c.Close(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer ts.Close()
+
+	t := &roundtrippers.AcceptCompressed{Transport: http.DefaultTransport}
+	c := http.Client{Transport: t}
+	resp, err := c.Get(ts.URL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	b, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	fmt.Printf("Response: %q\n", string(b))
+	// Output:
+	// Response: "excellent"
+}
 
 func ExampleLog() {
 	// Example on how to hook into the HTTP client roundtripper to log each HTTP
 	// request.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"message": "Working"}`))
+		_, _ = w.Write([]byte("Working"))
 	}))
 	defer ts.Close()
 
@@ -39,19 +144,19 @@ func ExampleLog() {
 		}))
 
 	t := &roundtrippers.Log{Transport: http.DefaultTransport, L: logger}
-	c := httpjson.Client{Client: &http.Client{Transport: t}}
+	c := http.Client{Transport: t}
 
-	var out struct {
-		Message string `json:"message"`
-	}
-	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
+	resp, err := c.Get(ts.URL)
+	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Response: %q\n", out.Message)
+	b, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	fmt.Printf("Response: %q\n", string(b))
 	// Output:
 	// level=INFO msg=http method=GET Content-Encoding=""
-	// level=INFO msg=http status=200 Content-Encoding="" Content-Length=22 Content-Type="application/json; charset=utf-8"
-	// level=INFO msg=http size=22 err=<nil>
+	// level=INFO msg=http status=200 Content-Encoding="" Content-Length=7 Content-Type="text/plain; charset=utf-8"
+	// level=INFO msg=http size=7 err=<nil>
 	// Response: "Working"
 }
 
@@ -59,28 +164,31 @@ func ExampleCapture() {
 	// Example on how to hook into the HTTP client roundtripper to capture each HTTP
 	// request.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"message": "Working"}`))
+		_, _ = w.Write([]byte("Working"))
 	}))
 	defer ts.Close()
 
 	ch := make(chan roundtrippers.Record, 1)
 	t := &roundtrippers.Capture{Transport: http.DefaultTransport, C: ch}
-	c := httpjson.Client{Client: &http.Client{Transport: t}}
-
-	var out struct {
-		Message string `json:"message"`
+	c := &http.Client{Transport: t}
+	resp, err := c.Get(ts.URL)
+	if err != nil {
+		log.Fatal(err)
 	}
-	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = resp.Body.Close(); err != nil {
 		log.Fatal(err)
 	}
 
 	// Print the captured request and response.
+	fmt.Printf("Response: %q\n", string(b))
 	record := <-ch
-	fmt.Printf("Response body: %q\n", record.Response.Body)
+	fmt.Printf("Recorded: %q\n", record.Response.Body)
 
-	fmt.Printf("Response: %q\n", out.Message)
 	// Output:
-	// Response body: {"{\"message\": \"Working\"}"}
 	// Response: "Working"
+	// Recorded: {"Working"}
 }
