@@ -6,8 +6,7 @@ package roundtrippers
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,7 +26,11 @@ type Log struct {
 
 func (l *Log) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
-	ll := l.L.With("id", genID(), "dur", elapsedTimeValue{start: time.Now()})
+	rid := req.Header.Get("X-Request-ID")
+	if rid == "" {
+		return nil, errors.New("roundtrippers.Log requires roundtrippers.RequestID")
+	}
+	ll := l.L.With("id", rid, "dur", elapsedTimeValue{start: time.Now()})
 	ll.Log(ctx, l.Level, "http", "url", req.URL.String(), "method", req.Method, "Content-Encoding", req.Header.Get("Content-Encoding"))
 	resp, err := l.Transport.RoundTrip(req)
 	if err != nil {
@@ -74,12 +77,6 @@ func (l *logBody) Close() error {
 	}
 	l.l.Log(l.ctx, level, "http", "size", l.responseSize, "err", l.err)
 	return err
-}
-
-func genID() string {
-	var bytes [12]byte
-	_, _ = rand.Read(bytes[:])
-	return base64.RawURLEncoding.EncodeToString(bytes[:])
 }
 
 type elapsedTimeValue struct {

@@ -152,7 +152,7 @@ func ExampleLog() {
 			},
 		}))
 
-	t := &roundtrippers.Log{Transport: http.DefaultTransport, L: logger}
+	t := &roundtrippers.RequestID{Transport: &roundtrippers.Log{Transport: http.DefaultTransport, L: logger}}
 	c := http.Client{Transport: t}
 
 	resp, err := c.Get(ts.URL)
@@ -203,4 +203,30 @@ func ExampleCapture() {
 	// Output:
 	// Response: "Working"
 	// Recorded: {"Working"}
+}
+
+func ExampleRequestID() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Request-ID") == "" {
+			_, _ = w.Write([]byte("bad"))
+		} else {
+			_, _ = w.Write([]byte("good"))
+		}
+	}))
+	defer ts.Close()
+	c := http.Client{Transport: &roundtrippers.RequestID{Transport: http.DefaultTransport}}
+	resp, err := c.Get(ts.URL)
+	if resp == nil || err != nil {
+		log.Fatal(resp, err)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = resp.Body.Close(); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Response: %q\n", string(b))
+	// Output:
+	// Response: "good"
 }
