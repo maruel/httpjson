@@ -5,7 +5,6 @@
 package httpjson_test
 
 import (
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,20 +12,9 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 
-	"github.com/klauspost/compress/zstd"
 	"github.com/maruel/httpjson"
 )
-
-func acceptCompressed(r *http.Request, want string) bool {
-	for encoding := range strings.SplitSeq(r.Header.Get("Accept-Encoding"), ",") {
-		if strings.TrimSpace(encoding) == want {
-			return true
-		}
-	}
-	return false
-}
 
 // serverRespondQuestion is an example of a server API implementation that
 // returns different structure based on the input. That happens frequently in
@@ -40,31 +28,80 @@ func serverRespondQuestion(question string) any {
 	}
 }
 
-func handleGetCompressed(w http.ResponseWriter, r *http.Request) {
-	if !acceptCompressed(r, "zstd") {
-		http.Error(w, "sorry, I only talk zstd", http.StatusBadRequest)
-		return
-	}
+func handleGet(w http.ResponseWriter, r *http.Request) {
 	out := serverRespondQuestion(r.URL.Query().Get("question"))
 	data, err := json.Marshal(out)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Encoding", "zstd")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	c, err := zstd.NewWriter(w)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	_, _ = w.Write(data)
+}
+
+type authorized struct {
+	transport http.RoundTripper
+	apiKey    string
+}
+
+func (a *authorized) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "bearer "+a.apiKey)
+	return a.transport.RoundTrip(req)
+}
+
+func ExampleClient_custom_transport() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "bearer secret-key" {
+			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"message": "working"}`))
+	}))
+	defer ts.Close()
+
+	var out struct {
+		Message string `json:"message"`
 	}
-	_, _ = c.Write(data)
-	_ = c.Close()
+	c := httpjson.Client{
+		// This enables using a custom transport that adds HTTP headers automatically.
+		Client: &http.Client{
+			Transport: &authorized{transport: http.DefaultTransport, apiKey: "secret-key"},
+		},
+	}
+	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Response: %s\n", out.Message)
+	// Output: Response: working
+}
+
+func ExampleClient_lenient() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"message": "working", "new_field":true}`))
+	}))
+	defer ts.Close()
+
+	var out struct {
+		Message string `json:"message"`
+	}
+	c := httpjson.Client{
+		// This enables the decoding to work even if unexpected fields are returned.
+		Lenient: true,
+	}
+	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Response: %s\n", out.Message)
+	// Output: Response: working
 }
 
 func ExampleClient_Get() {
-	// Compression is transparently supported!
-	ts := httptest.NewServer(http.HandlerFunc(handleGetCompressed))
+	ts := httptest.NewServer(http.HandlerFunc(handleGet))
 	defer ts.Close()
 
 	var out struct {
@@ -90,7 +127,7 @@ func ExampleClient_Get() {
 }
 
 func ExampleClient_GetRequest() {
-	ts := httptest.NewServer(http.HandlerFunc(handleGetCompressed))
+	ts := httptest.NewServer(http.HandlerFunc(handleGet))
 	defer ts.Close()
 
 	var out struct {
@@ -132,25 +169,12 @@ func ExampleClient_GetRequest() {
 	// {"error":"I only answer weather questions","got":"life"}
 }
 
-func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Content-Encoding") != "gzip" {
-		http.Error(w, "expected gzip", http.StatusBadRequest)
-		return
-	}
-	if !acceptCompressed(r, "zstd") {
-		http.Error(w, "sorry, I only talk zstd", http.StatusBadRequest)
-		return
-	}
-	gz, err := gzip.NewReader(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+func handlePost(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Question string `json:"question"`
 	}
 	var out any
-	if err = json.NewDecoder(gz).Decode(&in); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		out = map[string]string{"error": err.Error()}
 	} else {
 		out = serverRespondQuestion(in.Question)
@@ -160,19 +184,12 @@ func handlePostCompressed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Encoding", "zstd")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	c, err := zstd.NewWriter(w)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	_, _ = c.Write(data)
-	_ = c.Close()
+	_, _ = w.Write(data)
 }
 
 func ExampleClient_Post() {
-	ts := httptest.NewServer(http.HandlerFunc(handlePostCompressed))
+	ts := httptest.NewServer(http.HandlerFunc(handlePost))
 	defer ts.Close()
 
 	ctx := context.Background()
@@ -180,10 +197,7 @@ func ExampleClient_Post() {
 	h.Set("Authentication", "Bearer 123")
 	in := map[string]string{"question": "weather"}
 	out := map[string]string{}
-	// Transparently compress HTTP POST content.
-	c := httpjson.DefaultClient
-	c.PostCompress = "gzip"
-	if err := c.Post(ctx, ts.URL, h, in, &out); err != nil {
+	if err := httpjson.DefaultClient.Post(ctx, ts.URL, h, in, &out); err != nil {
 		fmt.Printf("Error: %s\n", err)
 		return
 	}

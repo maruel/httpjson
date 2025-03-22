@@ -7,30 +7,20 @@ package httpjson
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/andybalholm/brotli"
-	"github.com/klauspost/compress/zstd"
 )
 
 // Client is a JSON REST HTTP client supporting compression and using good
 // default behavior.
 type Client struct {
-	// Client defaults to http.DefaultClient. Overridde to add logging on each
-	// HTTP request. See the Logging example.
+	// Client defaults to http.DefaultClient. Override with http.RoundTripper to
+	// add functionality. See github.com/maruel/roundtrippers for useful ones.
 	Client *http.Client
-	// DefaultHeader is the headers to add to all request. For example "Authorization: Bearer 123".
-	DefaultHeader http.Header
-	// PostCompress determines HTTP POST compression. It must be empty or one of: "gzip", "br" or "zstd".
-	//
-	// Warning ⚠: compressing POST content is not supported on most servers.
-	PostCompress string
 	// Lenient allows unknown fields in the response.
 	//
 	// This inhibits from calling DisallowUnknownFields() on the JSON decoder.
@@ -47,7 +37,6 @@ var DefaultClient = Client{}
 
 // Get simplifies doing an HTTP GET in JSON.
 //
-// It transparently support advanced compression.
 // It fails on unknown fields in the response.
 // Buffers response body in memory.
 func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
@@ -61,7 +50,6 @@ func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) 
 // GetRequest simplifies doing an HTTP POST in JSON.
 //
 // It initiates the requests and returns the response back for further processing.
-// The result is transparently decompressed.
 func (c *Client) GetRequest(ctx context.Context, url string, hdr http.Header) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -72,7 +60,6 @@ func (c *Client) GetRequest(ctx context.Context, url string, hdr http.Header) (*
 
 // Post simplifies doing an HTTP POST in JSON.
 //
-// It transparently support advanced compression.
 // It fails on unknown fields in the response.
 // Buffers both post data and response body in memory.
 func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out any) error {
@@ -90,72 +77,22 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 // Buffers post data in memory.
 func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
 	b := bytes.Buffer{}
-	var w io.Writer = &b
-	var cl io.Closer
-	switch c.PostCompress {
-	case "gzip":
-		gz := gzip.NewWriter(&b)
-		w = gz
-		cl = gz
-	case "br":
-		br := brotli.NewWriter(&b)
-		w = br
-		cl = br
-	case "zstd":
-		zs, err := zstd.NewWriter(&b)
-		if err != nil {
-			return nil, err
-		}
-		w = zs
-		cl = zs
-	case "":
-	default:
-		return nil, fmt.Errorf("invalid PostCompress value: %q", c.PostCompress)
-	}
-	e := json.NewEncoder(w)
+	e := json.NewEncoder(&b)
 	// OMG this took me a while to figure this out. This affects LLM token encoding.
 	e.SetEscapeHTML(false)
 	if err := e.Encode(in); err != nil {
 		return nil, fmt.Errorf("internal error: %w", err)
 	}
-	if cl != nil {
-		if err := cl.Close(); err != nil {
-			return nil, fmt.Errorf("internal error: %w", err)
-		}
-	}
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &b)
 	if err != nil {
 		return nil, err
 	}
-	if c.PostCompress != "" {
-		if hdr == nil {
-			hdr = make(http.Header)
-		} else {
-			hdr = hdr.Clone()
-		}
-		hdr.Set("Content-Encoding", c.PostCompress)
-	}
 	return c.Do(req, hdr)
 }
 
-// Do sets the correct headers and transparently decompresses the response.
+// Do sets the correct headers and allow adding per-request headers.
 func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) {
-	// The standard library includes gzip. Disable transparent compression and
-	// add br and zstd. Tell the server we prefer zstd.
-	req.Header.Set("Accept-Encoding", "zstd, br, gzip")
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	for k, v := range c.DefaultHeader {
-		switch len(v) {
-		case 0:
-			req.Header.Del(k)
-		case 1:
-			req.Header.Set(k, v[0])
-		default:
-			for _, vv := range v {
-				req.Header.Add(k, vv)
-			}
-		}
-	}
 	for k, v := range hdr {
 		switch len(v) {
 		case 0:
@@ -172,37 +109,7 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
-	if resp != nil {
-		ce := resp.Header.Get("Content-Encoding")
-		switch ce {
-		case "br":
-			resp.Body = &body{r: brotli.NewReader(resp.Body), c: []io.Closer{resp.Body}}
-		case "gzip":
-			gz, err2 := gzip.NewReader(resp.Body)
-			if err2 != nil {
-				return resp, errors.Join(err2, err)
-			}
-			resp.Body = &body{r: gz, c: []io.Closer{resp.Body, gz}}
-		case "zstd":
-			zs, err2 := zstd.NewReader(resp.Body)
-			if err2 != nil {
-				return resp, errors.Join(err2, err)
-			}
-			resp.Body = &body{r: zs, c: []io.Closer{resp.Body, &adapter{zs}}}
-		}
-	}
-	return resp, err
-}
-
-type adapter struct {
-	zs *zstd.Decoder
-}
-
-func (a *adapter) Close() error {
-	// zstd.Decoder doesn't implement io.Closer. :/
-	a.zs.Close()
-	return nil
+	return client.Do(req)
 }
 
 // DecodeResponse parses the response body as JSON, trying strict decoding for
