@@ -14,7 +14,9 @@ normalized structured response schema.
 - Exposes functions to gracefully handle fallback response schemas, e.g. in case of errors.
 - Supports `context.Context` for cancellation.
 - Supports `http.Client` for custom configuration, like recording or custom logging!
-  - See package [roundtrippers](https://pkg.go.dev/github.com/maruel/httpjson/roundtrippers) for implementations
+  - See sister package
+    [roundtrippers](https://pkg.go.dev/github.com/maruel/roundtrippers) for
+    implementations.
 - Implemented with minimal dependencies.
 - Good code coverage.
 - Tested on linux, macOS and Windows.
