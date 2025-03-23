@@ -15,11 +15,11 @@ import (
 	"net/http"
 )
 
-// Client is a JSON REST HTTP client supporting compression and using good
-// default behavior.
+// Client is a JSON REST HTTP client using good default behavior.
 type Client struct {
 	// Client defaults to http.DefaultClient. Override with http.RoundTripper to
-	// add functionality. See github.com/maruel/roundtrippers for useful ones.
+	// add functionality. See github.com/maruel/roundtrippers for useful ones
+	// like logging, compression and more!
 	Client *http.Client
 	// Lenient allows unknown fields in the response.
 	//
@@ -32,7 +32,7 @@ type Client struct {
 	_ struct{}
 }
 
-// DefaultClient uses http.DefaultClient and does no compression.
+// DefaultClient uses http.DefaultClient and refuses unknown fields.
 var DefaultClient = Client{}
 
 // Get simplifies doing an HTTP GET in JSON.
@@ -73,7 +73,6 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 // PostRequest simplifies doing an HTTP POST in JSON.
 //
 // It initiates the requests and returns the response back for further processing.
-// The result is transparently decompressed.
 // Buffers post data in memory.
 func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
 	b := bytes.Buffer{}
@@ -181,24 +180,4 @@ func (h *Error) Error() string {
 		out += "\n" + string(h.ResponseBody)
 	}
 	return out
-}
-
-type body struct {
-	r io.Reader
-	c []io.Closer
-}
-
-func (b *body) Read(p []byte) (n int, err error) {
-	return b.r.Read(p)
-}
-
-func (b *body) Close() error {
-	var errs []error
-	// Close in reverse order.
-	for i := len(b.c) - 1; i >= 0; i-- {
-		if err := b.c[i].Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
