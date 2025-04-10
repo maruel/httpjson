@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -125,8 +126,8 @@ func TestClient_Get_error_decode_unexpected_field(t *testing.T) {
 		if errors.As(err, &jerr) {
 			t.Error("unexpected json.SyntaxError", jerr)
 		}
-		want := "json: unknown field \"output\""
-		if got := err.Error(); got != want{
+		want := "unknown field \"output\" of type \"string\""
+		if got := err.Error(); got != want {
 			t.Errorf("unexpected error\nwant: %q\ngot:  %q", want, got)
 		}
 	}
@@ -174,4 +175,205 @@ func TestClient_Post_error_url(t *testing.T) {
 	if err := (&Client{}).Post(context.Background(), "bad\x00url", nil, nil, nil); err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func TestDecodeJSON(t *testing.T) {
+	var out struct {
+		Output string `json:"output"`
+		Extra  string `json:"extra"`
+	}
+	data := []string{
+		`{"output":"data"}`,
+		`{"output":"data", "extra":"value"}`,
+	}
+	for i := range data {
+		if err := decodeJSON([]byte(data[i]), &out, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDecodeJSON_error(t *testing.T) {
+	type NamedNested struct {
+		FieldA string
+		FieldB int
+	}
+	type Example struct {
+		Name         string
+		Age          int
+		Numbers      []int
+		Nested       NamedNested
+		UnnamedArray []struct {
+			FieldC string
+		}
+	}
+	example := reflect.TypeOf(Example{})
+	t.Run("root", func(t *testing.T) {
+		data := map[string]any{
+			"Name":    "John",
+			"Age":     30,
+			"Numbers": []int{1, 2, 3},
+			"Extra1":  "unexpected",
+		}
+		want := []error{&UnknownFieldError{Field: "Extra1", Type: "string"}}
+		if got := findExtraKeysGeneric(example, data, ""); !errorsEqual(got, want) {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("nested", func(t *testing.T) {
+		data := map[string]any{
+			"Nested": map[string]any{
+				"FieldA": "value",
+				"FieldB": 42,
+				"Extra2": "unexpected_nested",
+			},
+		}
+		got := findExtraKeysGeneric(example, data, "")
+		want := []error{&UnknownFieldError{Field: "Nested.Extra2", Type: "string"}}
+		if !errorsEqual(got, want) {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("unnamed", func(t *testing.T) {
+		data := map[string]any{
+			"UnnamedArray": []map[string]any{
+				{
+					"FieldC": "value",
+					"Extra3": "unexpected_unnamed",
+				},
+			},
+		}
+		got := findExtraKeysGeneric(example, data, "")
+		want := []error{&UnknownFieldError{Field: "UnnamedArray[0].Extra3", Type: "string"}}
+		if !errorsEqual(got, want) {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
+func TestFindExtraKeysSlice(t *testing.T) {
+	type NestedStruct struct {
+		ValidField string
+	}
+	type TestStruct struct {
+		Field1 string
+		Field2 int
+		Nested []NestedStruct
+	}
+
+	tests := []struct {
+		name   string
+		t      reflect.Type
+		data   any
+		prefix string
+		want   []error
+	}{
+		{
+			name:   "Valid slice with no extra keys",
+			t:      reflect.TypeOf([]NestedStruct{}),
+			data:   []map[string]any{{"ValidField": "value1"}, {"ValidField": "value2"}},
+			prefix: "Nested",
+		},
+		{
+			name:   "Slice with extra keys",
+			t:      reflect.TypeOf([]NestedStruct{}),
+			data:   []map[string]any{{"ValidField": "value1", "ExtraField": "extra"}},
+			prefix: "Nested",
+			want:   []error{&UnknownFieldError{Field: "Nested[0].ExtraField", Type: "string"}},
+		},
+		{
+			name:   "Empty slice",
+			t:      reflect.TypeOf([]NestedStruct{}),
+			data:   []map[string]any{},
+			prefix: "Nested",
+		},
+		{
+			name:   "Non-slice data",
+			t:      reflect.TypeOf([]NestedStruct{}),
+			data:   "invalid",
+			prefix: "Nested",
+			want:   []error{&UnknownFieldError{Field: "Nested", Type: "string"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := findExtraKeysSlice(tt.t, tt.data, tt.prefix); !errorsEqual(got, tt.want) {
+				t.Errorf("failed\ngot:  %v\nwant: %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindExtraKeysStruct(t *testing.T) {
+	type NestedStruct struct {
+		ValidField string
+	}
+	type TestStruct struct {
+		Field1 string
+		Field2 int
+		Nested NestedStruct
+	}
+
+	tests := []struct {
+		name   string
+		t      reflect.Type
+		data   map[string]any
+		prefix string
+		want   []error
+	}{
+		{
+			name:   "Valid map with no extra keys",
+			t:      reflect.TypeOf(TestStruct{}),
+			data:   map[string]any{"Field1": "value1", "Field2": 42, "Nested": map[string]any{"ValidField": "nestedValue"}},
+			prefix: "",
+			want:   nil,
+		},
+		{
+			name:   "Map with extra keys at top level",
+			t:      reflect.TypeOf(TestStruct{}),
+			data:   map[string]any{"Field1": "value1", "ExtraField": "extra"},
+			prefix: "",
+			want:   []error{&UnknownFieldError{Field: "ExtraField", Type: "string"}},
+		},
+		{
+			name:   "Map with extra keys in nested struct",
+			t:      reflect.TypeOf(TestStruct{}),
+			data:   map[string]any{"Field1": "value1", "Nested": map[string]any{"ValidField": "nestedValue", "ExtraNestedField": "extra"}},
+			prefix: "",
+			want:   []error{&UnknownFieldError{Field: "Nested.ExtraNestedField", Type: "string"}},
+		},
+		{
+			name:   "Empty map",
+			t:      reflect.TypeOf(TestStruct{}),
+			data:   map[string]any{},
+			prefix: "",
+			want:   nil,
+		},
+		{
+			name:   "Map with invalid nested type",
+			t:      reflect.TypeOf(TestStruct{}),
+			data:   map[string]any{"Field1": "value1", "Nested": "invalid"},
+			prefix: "",
+			want:   []error{&UnknownFieldError{Field: "Nested", Type: "string"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := findExtraKeysStruct(tt.t, tt.data, tt.prefix); !errorsEqual(got, tt.want) {
+				t.Errorf("failed\ngot:  %v\nwant: %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func errorsEqual(a, b []error) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Error() != b[i].Error() {
+			return false
+		}
+	}
+	return true
 }
