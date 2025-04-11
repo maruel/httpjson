@@ -125,8 +125,9 @@ func TestClient_Get_error_decode_unexpected_field(t *testing.T) {
 		if errors.As(err, &jerr) {
 			t.Error("unexpected json.SyntaxError", jerr)
 		}
-		if err.Error() != `json: unknown field "output"` {
-			t.Error("got", err)
+		want := "json: unknown field \"output\""
+		if got := err.Error(); got != want{
+			t.Errorf("unexpected error\nwant: %q\ngot:  %q", want, got)
 		}
 	}
 

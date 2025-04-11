@@ -132,10 +132,7 @@ func DecodeResponse(resp *http.Response, out ...any) (int, error) {
 	}
 	var errs []error
 	for i := range out {
-		d := json.NewDecoder(bytes.NewReader(b))
-		d.DisallowUnknownFields()
-		d.UseNumber()
-		if err = d.Decode(out[i]); err == nil {
+		if err = decodeJSON(b, out[i], false); err == nil {
 			res = i
 			break
 		}
@@ -156,8 +153,12 @@ func (c *Client) decodeResponse(resp *http.Response, out any) error {
 	if err != nil {
 		return fmt.Errorf("failed to read server response: %w", err)
 	}
+	return decodeJSON(b, out, c.Lenient)
+}
+
+func decodeJSON(b []byte, out any, lenient bool) error {
 	d := json.NewDecoder(bytes.NewReader(b))
-	if !c.Lenient {
+	if !lenient {
 		d.DisallowUnknownFields()
 	}
 	d.UseNumber()
