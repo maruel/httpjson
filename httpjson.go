@@ -155,7 +155,10 @@ func (c *Client) decodeResponse(resp *http.Response, out any) error {
 	if err != nil {
 		return fmt.Errorf("failed to read server response: %w", err)
 	}
-	return decodeJSON(b, out, c.Lenient)
+	if err = decodeJSON(b, out, c.Lenient); err != nil {
+		return errors.Join(err, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status, PrintBody: true})
+	}
+	return nil
 }
 
 func decodeJSON(b []byte, out any, lenient bool) error {
@@ -191,9 +194,17 @@ func findExtraKeysGeneric(t reflect.Type, value any, prefix string) []error {
 	if value == nil {
 		return nil
 	}
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	for {
+		if v := reflect.ValueOf(value); v.Kind() == reflect.Ptr {
+			value = v.Elem().Interface()
+		} else {
+			break
+		}
+	}
 	switch t.Kind() {
-	case reflect.Ptr:
-		return findExtraKeysGeneric(t.Elem(), value, prefix)
 	case reflect.Struct, reflect.Map:
 		if v, ok := value.(map[string]any); ok {
 			return findExtraKeysStruct(t, v, prefix)
@@ -216,12 +227,15 @@ func findExtraKeysGeneric(t reflect.Type, value any, prefix string) []error {
 }
 
 func findExtraKeysStruct(t reflect.Type, data map[string]any, prefix string) []error {
-	validFields := make(map[string]struct{}, t.NumField())
+	validFields := make(map[string]string, t.NumField())
 	for i := range t.NumField() {
+		// Only consider exported fields.
 		if f := t.Field(i); f.PkgPath == "" {
-			// Only consider exported fields.
-			// TODO: skip json tags that are empty.
-			validFields[f.Name] = struct{}{}
+			if jsonName := strings.Split(f.Tag.Get("json"), ",")[0]; jsonName == "" {
+				validFields[f.Name] = f.Name
+			} else if jsonName != "-" {
+				validFields[jsonName] = f.Name
+			}
 		}
 	}
 	var out []error
@@ -230,9 +244,9 @@ func findExtraKeysStruct(t reflect.Type, data map[string]any, prefix string) []e
 		if prefix != "" {
 			v = prefix + "." + key
 		}
-		if _, ok := validFields[key]; !ok {
+		if name, ok := validFields[key]; !ok {
 			out = append(out, &UnknownFieldError{Field: v, Type: fmt.Sprintf("%T", value)})
-		} else if st, ok := t.FieldByName(key); ok {
+		} else if st, ok := t.FieldByName(name); ok {
 			out = append(out, findExtraKeysGeneric(st.Type, value, v)...)
 		}
 	}

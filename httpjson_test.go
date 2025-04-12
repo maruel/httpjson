@@ -92,15 +92,16 @@ func TestClient_Get_error_bad_decode(t *testing.T) {
 	err := c.Get(context.Background(), ts.URL, nil, &out)
 	if err != nil {
 		var herr *Error
-		if errors.As(err, &herr) {
-			t.Error("unexpected Error")
+		if !errors.As(err, &herr) {
+			t.Error("expected Error")
 		}
 		var jerr *json.SyntaxError
 		if !errors.As(err, &jerr) {
 			t.Error("expected json.SyntaxError")
 		}
-		if err.Error() != "invalid character 'o' in literal null (expecting 'u')" {
-			t.Error("got", err)
+		want := "invalid character 'o' in literal null (expecting 'u')\nhttp 200\nnot json"
+		if err.Error() != want {
+			t.Errorf("failed\nwant: %q\ngot:  %q", want, err)
 		}
 	}
 }
@@ -126,7 +127,7 @@ func TestClient_Get_error_decode_unexpected_field(t *testing.T) {
 		if errors.As(err, &jerr) {
 			t.Error("unexpected json.SyntaxError", jerr)
 		}
-		want := "unknown field \"output\" of type \"string\""
+		want := "unknown field \"output\" of type \"string\"\nhttp 200\n{\"output\":\"data\"}"
 		if got := err.Error(); got != want {
 			t.Errorf("unexpected error\nwant: %q\ngot:  %q", want, got)
 		}
@@ -199,23 +200,24 @@ func TestDecodeJSON_error(t *testing.T) {
 		FieldB int
 	}
 	type Example struct {
-		Name         string
-		Age          int
-		Numbers      []int
+		Name         string `foo:"very bar" json:"name"`
+		Age          int    `json:"age,omitempty"`
+		Numbers      []int  `json:"numbers,omitzero"`
+		Ignored      string `json:"-"`
 		Nested       NamedNested
 		UnnamedArray []struct {
 			FieldC string
-		}
+		} `json:"unnamed_array"`
 	}
 	example := reflect.TypeOf(Example{})
 	t.Run("root", func(t *testing.T) {
 		data := map[string]any{
-			"Name":    "John",
-			"Age":     30,
-			"Numbers": []int{1, 2, 3},
-			"Extra1":  "unexpected",
+			"name":    "John",
+			"age":     30,
+			"numbers": []int{1, 2, 3},
+			"Ignored": "unexpected",
 		}
-		want := []error{&UnknownFieldError{Field: "Extra1", Type: "string"}}
+		want := []error{&UnknownFieldError{Field: "Ignored", Type: "string"}}
 		if got := findExtraKeysGeneric(example, data, ""); !errorsEqual(got, want) {
 			t.Errorf("got %q, want %q", got, want)
 		}
@@ -236,7 +238,7 @@ func TestDecodeJSON_error(t *testing.T) {
 	})
 	t.Run("unnamed", func(t *testing.T) {
 		data := map[string]any{
-			"UnnamedArray": []map[string]any{
+			"unnamed_array": []map[string]any{
 				{
 					"FieldC": "value",
 					"Extra3": "unexpected_unnamed",
@@ -244,7 +246,7 @@ func TestDecodeJSON_error(t *testing.T) {
 			},
 		}
 		got := findExtraKeysGeneric(example, data, "")
-		want := []error{&UnknownFieldError{Field: "UnnamedArray[0].Extra3", Type: "string"}}
+		want := []error{&UnknownFieldError{Field: "unnamed_array[0].Extra3", Type: "string"}}
 		if !errorsEqual(got, want) {
 			t.Errorf("got %q, want %q", got, want)
 		}
@@ -263,10 +265,14 @@ func TestFindExtraKeysSlice(t *testing.T) {
 		want   []error
 	}{
 		{
-			name:   "Valid slice with no extra keys",
-			t:      reflect.TypeOf([]NestedStruct{}),
-			data:   []map[string]any{{"ValidField": "value1"}, {"ValidField": "value2"}},
-			prefix: "Nested",
+			name: "Valid slice with no extra keys",
+			t:    reflect.TypeOf([]NestedStruct{}),
+			data: []map[string]any{{"ValidField": "value1"}, {"ValidField": "value2"}},
+		},
+		{
+			name: "Valid slice with no extra keys (ptr)",
+			t:    reflect.TypeOf([]*NestedStruct{}),
+			data: []map[string]any{{"ValidField": "value1"}, {"ValidField": "value2"}},
 		},
 		{
 			name:   "Slice with extra keys",
@@ -276,10 +282,9 @@ func TestFindExtraKeysSlice(t *testing.T) {
 			want:   []error{&UnknownFieldError{Field: "Nested[0].ExtraField", Type: "string"}},
 		},
 		{
-			name:   "Empty slice",
-			t:      reflect.TypeOf([]NestedStruct{}),
-			data:   []map[string]any{},
-			prefix: "Nested",
+			name: "Empty slice",
+			t:    reflect.TypeOf([]NestedStruct{}),
+			data: []map[string]any{},
 		},
 		{
 			name:   "Non-slice data",
