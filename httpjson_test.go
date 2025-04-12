@@ -255,12 +255,6 @@ func TestFindExtraKeysSlice(t *testing.T) {
 	type NestedStruct struct {
 		ValidField string
 	}
-	type TestStruct struct {
-		Field1 string
-		Field2 int
-		Nested []NestedStruct
-	}
-
 	tests := []struct {
 		name   string
 		t      reflect.Type
