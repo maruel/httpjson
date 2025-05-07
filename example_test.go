@@ -254,3 +254,45 @@ func ExampleClient_PostRequest() {
 	}
 	// Output: Structured Error: Unauthorized
 }
+
+func ExampleClient_Request() {
+	// Use Request() to send a DELETE request.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		data, err := json.Marshal(map[string]string{"message": "done"})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	resp, err := httpjson.DefaultClient.Request(context.Background(), "DELETE", ts.URL, nil, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	out := map[string]string{}
+	i, err := httpjson.DecodeResponse(resp, &out)
+	switch i {
+	case 0:
+		fmt.Printf("Success case: %s\n", out["message"])
+	case -1:
+		// No decoding happened. Handle various kinds of errors.
+		var herr *httpjson.Error
+		if errors.As(err, &herr) {
+			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
+		}
+		var jerr *json.SyntaxError
+		if errors.As(err, &jerr) {
+			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
+		}
+		fmt.Printf("Error: %s\n", err)
+	}
+	// Output:
+	// Success case: done
+}
