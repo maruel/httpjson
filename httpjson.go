@@ -51,13 +51,11 @@ func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) 
 
 // GetRequest simplifies doing an HTTP POST in JSON.
 //
+// It is a shorthand for Request().
+//
 // It initiates the requests and returns the response back for further processing.
 func (c *Client) GetRequest(ctx context.Context, url string, hdr http.Header) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	return c.Do(req, hdr)
+	return c.Request(ctx, "GET", url, hdr, nil)
 }
 
 // Post simplifies doing an HTTP POST in JSON.
@@ -77,14 +75,32 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 // It initiates the requests and returns the response back for further processing.
 // Buffers post data in memory.
 func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
-	b := bytes.Buffer{}
-	e := json.NewEncoder(&b)
-	// OMG this took me a while to figure this out. This affects LLM token encoding.
-	e.SetEscapeHTML(false)
-	if err := e.Encode(in); err != nil {
-		return nil, fmt.Errorf("internal error: %w", err)
+	if in == nil {
+		// Catch inattentionnal nil.
+		return nil, fmt.Errorf("in is nil")
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", url, &b)
+	return c.Request(ctx, "POST", url, hdr, in)
+}
+
+// Request simplifies doing an HTTP PATCH/DELETE/PUT in JSON.
+//
+// In is optional.
+//
+// It initiates the requests and returns the response back for further processing.
+// Buffers post data in memory.
+func (c *Client) Request(ctx context.Context, method, url string, hdr http.Header, in any) (*http.Response, error) {
+	var b io.Reader
+	if in != nil {
+		buf := &bytes.Buffer{}
+		e := json.NewEncoder(buf)
+		// OMG this took me a while to figure this out. This affects LLM token encoding.
+		e.SetEscapeHTML(false)
+		if err := e.Encode(in); err != nil {
+			return nil, fmt.Errorf("internal error: %w", err)
+		}
+		b = buf
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, b)
 	if err != nil {
 		return nil, err
 	}
