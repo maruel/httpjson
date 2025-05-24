@@ -195,7 +195,7 @@ func decodeJSON(b []byte, out any, lenient bool) error {
 			d = json.NewDecoder(bytes.NewReader(b))
 			d.UseNumber()
 			if d.Decode(&m) == nil {
-				if err2 := errors.Join(findExtraKeysGeneric(reflect.TypeOf(out), m, "")...); err2 != nil {
+				if err2 := errors.Join(FindExtraKeys(reflect.TypeOf(out), m)...); err2 != nil {
 					return err2
 				}
 			}
@@ -204,6 +204,11 @@ func decodeJSON(b []byte, out any, lenient bool) error {
 		return err
 	}
 	return nil
+}
+
+// FindExtraKeys returns all unknown fields in value. It runs recursively.
+func FindExtraKeys(t reflect.Type, value map[string]any) []error {
+	return findExtraKeysGeneric(t, value, "")
 }
 
 func findExtraKeysGeneric(t reflect.Type, value any, prefix string) []error {

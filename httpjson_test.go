@@ -245,7 +245,7 @@ func TestDecodeJSON_error(t *testing.T) {
 				},
 			},
 		}
-		got := findExtraKeysGeneric(example, data, "")
+		got := FindExtraKeys(example, data)
 		want := []error{&UnknownFieldError{Field: "unnamed_array[0].Extra3", Type: "string"}}
 		if !errorsEqual(got, want) {
 			t.Errorf("got %q, want %q", got, want)
