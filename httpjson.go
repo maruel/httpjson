@@ -188,8 +188,8 @@ func decodeJSON(b []byte, out any, lenient bool) error {
 			return err
 		}
 		// decode.object() in encoding/json.go does not return a structured error
-		// when an unknown field is found. Process it manually.
-		if strings.Contains(err.Error(), "json: unknown field ") {
+		// when an unknown field is found. Process it manually or when the type is wrong.
+		if s := err.Error(); strings.Contains(s, "json: unknown field ") || strings.Contains(s, "json: cannot unmarshal ") {
 			// Decode again but this time capture all errors.
 			m := map[string]any{}
 			d = json.NewDecoder(bytes.NewReader(b))
