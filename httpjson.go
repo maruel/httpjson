@@ -228,11 +228,13 @@ func findExtraKeysGeneric(t reflect.Type, value any, prefix string) []error {
 		}
 	}
 	switch t.Kind() {
-	case reflect.Struct, reflect.Map:
+	case reflect.Struct:
 		if v, ok := value.(map[string]any); ok {
 			return findExtraKeysStruct(t, v, prefix)
 		}
 		return []error{&UnknownFieldError{Field: prefix, Type: fmt.Sprintf("%T", value)}}
+	case reflect.Map:
+		return findExtraKeysMap(t, value, prefix)
 	case reflect.Slice, reflect.Array:
 		return findExtraKeysSlice(t, value, prefix)
 	case reflect.Bool,
@@ -272,6 +274,25 @@ func findExtraKeysStruct(t reflect.Type, data map[string]any, prefix string) []e
 		} else if st, ok := t.FieldByName(name); ok {
 			out = append(out, findExtraKeysGeneric(st.Type, value, v)...)
 		}
+	}
+	return out
+}
+
+func findExtraKeysMap(t reflect.Type, data any, prefix string) []error {
+	d2 := reflect.ValueOf(data)
+	if d2.Kind() != reflect.Map {
+		return []error{&UnknownFieldError{Field: prefix, Type: fmt.Sprintf("%T", data)}}
+	}
+	var out []error
+	vt := t.Elem()
+	for _, key := range d2.MapKeys() {
+		if key.Kind() != reflect.String {
+			// A map key is not a dict. This is a general decoding error, the JSON data is invalid. This cannot
+			// happen.
+			out = append(out, fmt.Errorf("invalid json: %s[%q] is not a valid JSON key; type %s, must be string", prefix, key.String(), key.Type()))
+		}
+		v := d2.MapIndex(key)
+		out = append(out, findExtraKeysGeneric(vt, v, prefix+fmt.Sprintf("[%s]", key))...)
 	}
 	return out
 }
