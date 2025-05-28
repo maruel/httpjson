@@ -207,7 +207,9 @@ func decodeJSON(b []byte, out any, lenient bool) error {
 }
 
 // FindExtraKeys returns all unknown fields in value. It runs recursively.
-func FindExtraKeys(t reflect.Type, value map[string]any) []error {
+//
+// For best result, value should be either map[string]any or []any.
+func FindExtraKeys(t reflect.Type, value any) []error {
 	return findExtraKeysGeneric(t, value, "")
 }
 
