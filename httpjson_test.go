@@ -30,7 +30,7 @@ func TestClient_Get(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Output != "data" {
-		t.Errorf("got %q, want %q", out.Output, "data")
+		t.Errorf("Unexpected\nwant: %v\ngot:  %v", "data", out.Output)
 	}
 }
 
@@ -40,7 +40,7 @@ func TestClient_Get_header(t *testing.T) {
 		t.Parallel()
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if h := r.Header.Get("X-Test"); h != "value" {
-				t.Errorf("got %q, want %q", h, "value")
+				t.Errorf("Unexpected\nwant: %v\ngot:  %v", "value", h)
 			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.Write([]byte("null"))
@@ -127,7 +127,7 @@ func TestClient_Get_error_decode_unexpected_field(t *testing.T) {
 		if errors.As(err, &jerr) {
 			t.Error("unexpected json.SyntaxError", jerr)
 		}
-		want := "unknown field \"output\" of type \"string\"\nhttp 200\n{\"output\":\"data\"}"
+		want := "unknown field *struct { Different string \"json:\\\"different\\\"\" }.output of type \"string\"\nhttp 200\n{\"output\":\"data\"}"
 		if got := err.Error(); got != want {
 			t.Errorf("unexpected error\nwant: %q\ngot:  %q", want, got)
 		}
@@ -152,7 +152,7 @@ func TestClient_Post(t *testing.T) {
 			t.Error(err)
 		}
 		if in.Input != "data" {
-			t.Errorf("got %q, want %q", in.Input, "data")
+			t.Errorf("Unexpected\nwant: %v\ngot:  %v", "data", in.Input)
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"output":"data"}`))
@@ -168,7 +168,7 @@ func TestClient_Post(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Output != "data" {
-		t.Errorf("got %q, want %q", out.Output, "data")
+		t.Errorf("Unexpected\nwant: %v\ngot:  %v", "data", out.Output)
 	}
 }
 
@@ -217,9 +217,9 @@ func TestDecodeJSON_error(t *testing.T) {
 			"numbers": []int{1, 2, 3},
 			"Ignored": "unexpected",
 		}
-		want := []error{&UnknownFieldError{Field: "Ignored", Type: "string"}}
-		if got := findExtraKeysGeneric(example, data, ""); !errorsEqual(got, want) {
-			t.Errorf("got %q, want %q", got, want)
+		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "Ignored", FieldType: "string"}}
+		if got := findExtraKeysGeneric(example, example, data, ""); !errorsEqual(got, want) {
+			t.Errorf("Unexpected\nwant: %v\ngot:  %v", want, got)
 		}
 	})
 	t.Run("nested", func(t *testing.T) {
@@ -230,10 +230,10 @@ func TestDecodeJSON_error(t *testing.T) {
 				"Extra2": "unexpected_nested",
 			},
 		}
-		got := findExtraKeysGeneric(example, data, "")
-		want := []error{&UnknownFieldError{Field: "Nested.Extra2", Type: "string"}}
+		got := findExtraKeysGeneric(example, example, data, "")
+		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "Nested.Extra2", FieldType: "string"}}
 		if !errorsEqual(got, want) {
-			t.Errorf("got %q, want %q", got, want)
+			t.Errorf("Unexpected\nwant: %v\ngot:  %v", want, got)
 		}
 	})
 	t.Run("unnamed", func(t *testing.T) {
@@ -246,9 +246,9 @@ func TestDecodeJSON_error(t *testing.T) {
 			},
 		}
 		got := FindExtraKeys(example, data)
-		want := []error{&UnknownFieldError{Field: "unnamed_array[0].Extra3", Type: "string"}}
+		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "unnamed_array[0].Extra3", FieldType: "string"}}
 		if !errorsEqual(got, want) {
-			t.Errorf("got %q, want %q", got, want)
+			t.Errorf("Unexpected\nwant: %v\ngot:  %v", want, got)
 		}
 	})
 }
@@ -288,7 +288,8 @@ func TestFindExtraKeys(t *testing.T) {
 			name: "Slice with extra keys",
 			t:    reflect.TypeOf([]NestedStruct{}),
 			data: []map[string]any{{"ValidField": "value1", "ExtraField": "extra"}},
-			want: []error{&UnknownFieldError{Field: "[0].ExtraField", Type: "string"}},
+			// Technically the '.' is incorrect. It comes from reflect.Type.String().
+			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct.[0]", Field: "ExtraField", FieldType: "string"}},
 		},
 		{
 			name: "Empty slice",
@@ -299,7 +300,7 @@ func TestFindExtraKeys(t *testing.T) {
 			name: "Non-slice data",
 			t:    reflect.TypeOf([]NestedStruct{}),
 			data: "invalid",
-			want: []error{&UnknownFieldError{Field: "", Type: "string"}},
+			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct", Field: "", FieldType: "string"}},
 		},
 		{
 			name: "Valid map with no extra keys",
@@ -315,19 +316,19 @@ func TestFindExtraKeys(t *testing.T) {
 			name: "Inconsistent map",
 			t:    reflect.TypeOf(map[string]string{}),
 			data: []any{"str", 42},
-			want: []error{&UnknownFieldError{Field: "", Type: "[]interface {}"}},
+			want: []error{&UnknownFieldError{StructType: "map[string]string", Field: "", FieldType: "[]interface {}"}},
 		},
 		{
 			name: "Map with extra keys at top level",
 			t:    reflect.TypeOf(TestStruct{}),
 			data: map[string]any{"Field1": "value1", "ExtraField": "extra"},
-			want: []error{&UnknownFieldError{Field: "ExtraField", Type: "string"}},
+			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "ExtraField", FieldType: "string"}},
 		},
 		{
 			name: "Map with extra keys in nested struct",
 			t:    reflect.TypeOf(TestStruct{}),
 			data: map[string]any{"Field1": "value1", "Nested": map[string]any{"ValidField": "nestedValue", "ExtraNestedField": "extra"}},
-			want: []error{&UnknownFieldError{Field: "Nested.ExtraNestedField", Type: "string"}},
+			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested.ExtraNestedField", FieldType: "string"}},
 		},
 		{
 			name: "Empty map",
@@ -338,13 +339,13 @@ func TestFindExtraKeys(t *testing.T) {
 			name: "Map with invalid nested type",
 			t:    reflect.TypeOf(TestStruct{}),
 			data: map[string]any{"Field1": "value1", "Nested": "invalid"},
-			want: []error{&UnknownFieldError{Field: "Nested", Type: "string"}},
+			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested", FieldType: "string"}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := FindExtraKeys(tt.t, tt.data); !errorsEqual(got, tt.want) {
-				t.Errorf("failed\ngot:  %v\nwant: %v", got, tt.want)
+				t.Errorf("failed\nwant: %v\ngot:  %v", tt.want, got)
 			}
 		})
 	}

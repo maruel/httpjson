@@ -25,7 +25,8 @@ type Client struct {
 	Client *http.Client
 	// Lenient allows unknown fields in the response.
 	//
-	// This inhibits from calling DisallowUnknownFields() on the JSON decoder.
+	// This inhibits from calling DisallowUnknownFields() on the JSON decoder, which will generally return a
+	// *UnknownFieldError.
 	//
 	// Use this in production so that your client doesn't break when the server
 	// add new fields.
@@ -34,12 +35,13 @@ type Client struct {
 	_ struct{}
 }
 
-// DefaultClient uses http.DefaultClient and refuses unknown fields.
+// DefaultClient uses http.DefaultClient and refuses unknown fields, returning *UnknownFieldError on them.
 var DefaultClient = Client{}
 
-// Get simplifies doing an HTTP GET in JSON.
+// Get simplifies doing an HTTP GET in JSON. Returns *Error on failure.
 //
-// It fails on unknown fields in the response.
+// It fails on unknown fields in the response, returning *UnknownFieldError on them.
+//
 // Buffers response body in memory.
 func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) error {
 	resp, err := c.GetRequest(ctx, url, hdr)
@@ -49,7 +51,7 @@ func (c *Client) Get(ctx context.Context, url string, hdr http.Header, out any) 
 	return c.decodeResponse(resp, out)
 }
 
-// GetRequest simplifies doing an HTTP POST in JSON.
+// GetRequest simplifies doing an HTTP POST in JSON. Returns *Error on failure.
 //
 // It is a shorthand for Request().
 //
@@ -58,9 +60,10 @@ func (c *Client) GetRequest(ctx context.Context, url string, hdr http.Header) (*
 	return c.Request(ctx, "GET", url, hdr, nil)
 }
 
-// Post simplifies doing an HTTP POST in JSON.
+// Post simplifies doing an HTTP POST in JSON. Returns *Error on failure.
 //
-// It fails on unknown fields in the response.
+// It fails on unknown fields in the response, returning *UnknownFieldError on them.
+//
 // Buffers both post data and response body in memory.
 func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out any) error {
 	resp, err := c.PostRequest(ctx, url, hdr, in)
@@ -70,7 +73,7 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 	return c.decodeResponse(resp, out)
 }
 
-// PostRequest simplifies doing an HTTP POST in JSON.
+// PostRequest simplifies doing an HTTP POST in JSON. Returns *Error on failure.
 //
 // It initiates the requests and returns the response back for further processing.
 // Buffers post data in memory.
@@ -135,7 +138,7 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 //
 // Returns the index of which output structured was decoded along joined errors
 // for both json decode failure (*json.UnmarshalTypeError, *json.SyntaxError,
-// *json.InvalidUnmarshalError) and HTTP status code (*httpjson.Error). Returns
+// *json.InvalidUnmarshalError) and HTTP status code (*Error). Returns
 // -1 as the index if no output was decoded.
 //
 // Buffers response body in memory.
@@ -206,14 +209,14 @@ func decodeJSON(b []byte, out any, lenient bool) error {
 	return nil
 }
 
-// FindExtraKeys returns all unknown fields in value. It runs recursively.
+// FindExtraKeys returns all unknown fields in value as *UnknownFieldError. It runs recursively.
 //
 // For best result, value should be either map[string]any or []any.
 func FindExtraKeys(t reflect.Type, value any) []error {
-	return findExtraKeysGeneric(t, value, "")
+	return findExtraKeysGeneric(t, t, value, "")
 }
 
-func findExtraKeysGeneric(t reflect.Type, value any, prefix string) []error {
+func findExtraKeysGeneric(root, t reflect.Type, value any, prefix string) []error {
 	if value == nil {
 		return nil
 	}
@@ -230,13 +233,17 @@ func findExtraKeysGeneric(t reflect.Type, value any, prefix string) []error {
 	switch t.Kind() {
 	case reflect.Struct:
 		if v, ok := value.(map[string]any); ok {
-			return findExtraKeysStruct(t, v, prefix)
+			return findExtraKeysStruct(root, t, v, prefix)
 		}
-		return []error{&UnknownFieldError{Field: prefix, Type: fmt.Sprintf("%T", value)}}
+		return []error{&UnknownFieldError{
+			StructType: root.String(),
+			Field:      prefix,
+			FieldType:  fmt.Sprintf("%T", value),
+		}}
 	case reflect.Map:
-		return findExtraKeysMap(t, value, prefix)
+		return findExtraKeysMap(root, t, value, prefix)
 	case reflect.Slice, reflect.Array:
-		return findExtraKeysSlice(t, value, prefix)
+		return findExtraKeysSlice(root, t, value, prefix)
 	case reflect.Bool,
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
@@ -247,11 +254,11 @@ func findExtraKeysGeneric(t reflect.Type, value any, prefix string) []error {
 		return nil
 	// case reflect.Chan, reflect.Func, reflect.Interface, reflect.UnsafePointer:
 	default:
-		return []error{&UnknownFieldError{Field: prefix, Type: fmt.Sprintf("%T", value)}}
+		return []error{&UnknownFieldError{Field: prefix, FieldType: fmt.Sprintf("%T", value)}}
 	}
 }
 
-func findExtraKeysStruct(t reflect.Type, data map[string]any, prefix string) []error {
+func findExtraKeysStruct(root, t reflect.Type, data map[string]any, prefix string) []error {
 	validFields := make(map[string]string, t.NumField())
 	for i := range t.NumField() {
 		// Only consider exported fields.
@@ -270,18 +277,26 @@ func findExtraKeysStruct(t reflect.Type, data map[string]any, prefix string) []e
 			v = prefix + "." + key
 		}
 		if name, ok := validFields[key]; !ok {
-			out = append(out, &UnknownFieldError{Field: v, Type: fmt.Sprintf("%T", value)})
+			out = append(out, &UnknownFieldError{
+				StructType: root.String(),
+				Field:      v,
+				FieldType:  fmt.Sprintf("%T", value),
+			})
 		} else if st, ok := t.FieldByName(name); ok {
-			out = append(out, findExtraKeysGeneric(st.Type, value, v)...)
+			out = append(out, findExtraKeysGeneric(root, st.Type, value, v)...)
 		}
 	}
 	return out
 }
 
-func findExtraKeysMap(t reflect.Type, data any, prefix string) []error {
+func findExtraKeysMap(root, t reflect.Type, data any, prefix string) []error {
 	d2 := reflect.ValueOf(data)
 	if d2.Kind() != reflect.Map {
-		return []error{&UnknownFieldError{Field: prefix, Type: fmt.Sprintf("%T", data)}}
+		return []error{&UnknownFieldError{
+			StructType: root.String(),
+			Field:      prefix,
+			FieldType:  fmt.Sprintf("%T", data),
+		}}
 	}
 	var out []error
 	vt := t.Elem()
@@ -292,19 +307,25 @@ func findExtraKeysMap(t reflect.Type, data any, prefix string) []error {
 			out = append(out, fmt.Errorf("invalid json: %s[%q] is not a valid JSON key; type %s, must be string", prefix, key.String(), key.Type()))
 		}
 		v := d2.MapIndex(key)
-		out = append(out, findExtraKeysGeneric(vt, v, prefix+fmt.Sprintf("[%s]", key))...)
+		out = append(out, findExtraKeysGeneric(root, vt, v, prefix+fmt.Sprintf("[%s]", key))...)
 	}
 	return out
 }
 
-func findExtraKeysSlice(t reflect.Type, data any, prefix string) []error {
+func findExtraKeysSlice(root, t reflect.Type, data any, prefix string) []error {
 	d2 := reflect.ValueOf(data)
 	if d2.Kind() != reflect.Slice && d2.Kind() != reflect.Array {
-		return []error{&UnknownFieldError{Field: prefix, Type: fmt.Sprintf("%T", data)}}
+		return []error{
+			&UnknownFieldError{
+				StructType: root.String(),
+				Field:      prefix,
+				FieldType:  fmt.Sprintf("%T", data),
+			},
+		}
 	}
 	var out []error
 	for i := range d2.Len() {
-		out = append(out, findExtraKeysGeneric(t.Elem(), d2.Index(i).Interface(), prefix+fmt.Sprintf("[%d]", i))...)
+		out = append(out, findExtraKeysGeneric(root, t.Elem(), d2.Index(i).Interface(), prefix+fmt.Sprintf("[%d]", i))...)
 	}
 	return out
 }
@@ -331,11 +352,12 @@ func (h *Error) Error() string {
 
 // UnknownFieldError is one unknown field in the JSON response.
 type UnknownFieldError struct {
-	Field string
-	Type  string
+	StructType string
+	Field      string
+	FieldType  string
 }
 
 // Error implements the error interface.
 func (e *UnknownFieldError) Error() string {
-	return fmt.Sprintf("unknown field %q of type %q", e.Field, e.Type)
+	return fmt.Sprintf("unknown field %s.%s of type %q", e.StructType, e.Field, e.FieldType)
 }
