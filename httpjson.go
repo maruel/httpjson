@@ -239,6 +239,7 @@ func findExtraKeysGeneric(root, t reflect.Type, value any, prefix string) []erro
 			StructType: root.String(),
 			Field:      prefix,
 			FieldType:  fmt.Sprintf("%T", value),
+			FieldValue: value,
 		}}
 	case reflect.Map:
 		return findExtraKeysMap(root, t, value, prefix)
@@ -254,7 +255,12 @@ func findExtraKeysGeneric(root, t reflect.Type, value any, prefix string) []erro
 		return nil
 	// case reflect.Chan, reflect.Func, reflect.Interface, reflect.UnsafePointer:
 	default:
-		return []error{&UnknownFieldError{Field: prefix, FieldType: fmt.Sprintf("%T", value)}}
+		return []error{&UnknownFieldError{
+			StructType: root.String(),
+			Field:      prefix,
+			FieldType:  fmt.Sprintf("%T", value),
+			FieldValue: value,
+		}}
 	}
 }
 
@@ -281,6 +287,7 @@ func findExtraKeysStruct(root, t reflect.Type, data map[string]any, prefix strin
 				StructType: root.String(),
 				Field:      v,
 				FieldType:  fmt.Sprintf("%T", value),
+				FieldValue: value,
 			})
 		} else if st, ok := t.FieldByName(name); ok {
 			out = append(out, findExtraKeysGeneric(root, st.Type, value, v)...)
@@ -296,6 +303,7 @@ func findExtraKeysMap(root, t reflect.Type, data any, prefix string) []error {
 			StructType: root.String(),
 			Field:      prefix,
 			FieldType:  fmt.Sprintf("%T", data),
+			FieldValue: data,
 		}}
 	}
 	var out []error
@@ -320,6 +328,7 @@ func findExtraKeysSlice(root, t reflect.Type, data any, prefix string) []error {
 				StructType: root.String(),
 				Field:      prefix,
 				FieldType:  fmt.Sprintf("%T", data),
+				FieldValue: data,
 			},
 		}
 	}
@@ -355,9 +364,13 @@ type UnknownFieldError struct {
 	StructType string
 	Field      string
 	FieldType  string
+	FieldValue any
 }
 
 // Error implements the error interface.
 func (e *UnknownFieldError) Error() string {
-	return fmt.Sprintf("unknown field %s.%s of type %q", e.StructType, e.Field, e.FieldType)
+	if e.FieldValue == nil {
+		return fmt.Sprintf("unknown field %s.%s of type %s with value %v", e.StructType, e.Field, e.FieldType, e.FieldValue)
+	}
+	return fmt.Sprintf("unknown field %s.%s of type %s with value %q", e.StructType, e.Field, e.FieldType, e.FieldValue)
 }

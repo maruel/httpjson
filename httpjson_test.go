@@ -127,7 +127,7 @@ func TestClient_Get_error_decode_unexpected_field(t *testing.T) {
 		if errors.As(err, &jerr) {
 			t.Error("unexpected json.SyntaxError", jerr)
 		}
-		want := "unknown field *struct { Different string \"json:\\\"different\\\"\" }.output of type \"string\"\nhttp 200\n{\"output\":\"data\"}"
+		want := "unknown field *struct { Different string \"json:\\\"different\\\"\" }.output of type string with value \"data\"\nhttp 200\n{\"output\":\"data\"}"
 		if got := err.Error(); got != want {
 			t.Errorf("unexpected error\nwant: %q\ngot:  %q", want, got)
 		}
@@ -217,7 +217,7 @@ func TestDecodeJSON_error(t *testing.T) {
 			"numbers": []int{1, 2, 3},
 			"Ignored": "unexpected",
 		}
-		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "Ignored", FieldType: "string"}}
+		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "Ignored", FieldType: "string", FieldValue: "unexpected"}}
 		if got := findExtraKeysGeneric(example, example, data, ""); !errorsEqual(got, want) {
 			t.Errorf("Unexpected\nwant: %v\ngot:  %v", want, got)
 		}
@@ -231,7 +231,7 @@ func TestDecodeJSON_error(t *testing.T) {
 			},
 		}
 		got := findExtraKeysGeneric(example, example, data, "")
-		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "Nested.Extra2", FieldType: "string"}}
+		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "Nested.Extra2", FieldType: "string", FieldValue: "unexpected_nested"}}
 		if !errorsEqual(got, want) {
 			t.Errorf("Unexpected\nwant: %v\ngot:  %v", want, got)
 		}
@@ -246,7 +246,7 @@ func TestDecodeJSON_error(t *testing.T) {
 			},
 		}
 		got := FindExtraKeys(example, data)
-		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "unnamed_array[0].Extra3", FieldType: "string"}}
+		want := []error{&UnknownFieldError{StructType: "httpjson.Example", Field: "unnamed_array[0].Extra3", FieldType: "string", FieldValue: "unexpected_unnamed"}}
 		if !errorsEqual(got, want) {
 			t.Errorf("Unexpected\nwant: %v\ngot:  %v", want, got)
 		}
@@ -289,7 +289,7 @@ func TestFindExtraKeys(t *testing.T) {
 			t:    reflect.TypeOf([]NestedStruct{}),
 			data: []map[string]any{{"ValidField": "value1", "ExtraField": "extra"}},
 			// Technically the '.' is incorrect. It comes from reflect.Type.String().
-			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct.[0]", Field: "ExtraField", FieldType: "string"}},
+			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct.[0]", Field: "ExtraField", FieldType: "string", FieldValue: "extra"}},
 		},
 		{
 			name: "Empty slice",
@@ -300,7 +300,7 @@ func TestFindExtraKeys(t *testing.T) {
 			name: "Non-slice data",
 			t:    reflect.TypeOf([]NestedStruct{}),
 			data: "invalid",
-			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct", Field: "", FieldType: "string"}},
+			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct", Field: "", FieldType: "string", FieldValue: "invalid"}},
 		},
 		{
 			name: "Valid map with no extra keys",
@@ -316,19 +316,19 @@ func TestFindExtraKeys(t *testing.T) {
 			name: "Inconsistent map",
 			t:    reflect.TypeOf(map[string]string{}),
 			data: []any{"str", 42},
-			want: []error{&UnknownFieldError{StructType: "map[string]string", Field: "", FieldType: "[]interface {}"}},
+			want: []error{&UnknownFieldError{StructType: "map[string]string", Field: "", FieldType: "[]interface {}", FieldValue: []any{"str", 42}}},
 		},
 		{
 			name: "Map with extra keys at top level",
 			t:    reflect.TypeOf(TestStruct{}),
 			data: map[string]any{"Field1": "value1", "ExtraField": "extra"},
-			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "ExtraField", FieldType: "string"}},
+			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "ExtraField", FieldType: "string", FieldValue: "extra"}},
 		},
 		{
 			name: "Map with extra keys in nested struct",
 			t:    reflect.TypeOf(TestStruct{}),
 			data: map[string]any{"Field1": "value1", "Nested": map[string]any{"ValidField": "nestedValue", "ExtraNestedField": "extra"}},
-			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested.ExtraNestedField", FieldType: "string"}},
+			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested.ExtraNestedField", FieldType: "string", FieldValue: "extra"}},
 		},
 		{
 			name: "Empty map",
@@ -339,7 +339,7 @@ func TestFindExtraKeys(t *testing.T) {
 			name: "Map with invalid nested type",
 			t:    reflect.TypeOf(TestStruct{}),
 			data: map[string]any{"Field1": "value1", "Nested": "invalid"},
-			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested", FieldType: "string"}},
+			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested", FieldType: "string", FieldValue: "invalid"}},
 		},
 	}
 	for _, tt := range tests {
