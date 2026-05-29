@@ -220,11 +220,11 @@ func findExtraKeysGeneric(root, t reflect.Type, value any, prefix string) []erro
 	if value == nil {
 		return nil
 	}
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	for {
-		if v := reflect.ValueOf(value); v.Kind() == reflect.Ptr {
+		if v := reflect.ValueOf(value); v.Kind() == reflect.Pointer {
 			value = v.Elem().Interface()
 		} else {
 			break
@@ -323,6 +323,12 @@ func findExtraKeysMap(root, t reflect.Type, data any, prefix string) []error {
 func findExtraKeysSlice(root, t reflect.Type, data any, prefix string) []error {
 	d2 := reflect.ValueOf(data)
 	if d2.Kind() != reflect.Slice && d2.Kind() != reflect.Array {
+		// []byte fields are decoded by json.Unmarshal into map[string]any as
+		// a string (base64), not as a slice. Accept a string when the target
+		// is []byte or [N]byte.
+		if d2.Kind() == reflect.String && isByteSliceOrArray(t) {
+			return nil
+		}
 		return []error{
 			&UnknownFieldError{
 				StructType: root.String(),
@@ -337,6 +343,11 @@ func findExtraKeysSlice(root, t reflect.Type, data any, prefix string) []error {
 		out = append(out, findExtraKeysGeneric(root, t.Elem(), d2.Index(i).Interface(), prefix+fmt.Sprintf("[%d]", i))...)
 	}
 	return out
+}
+
+// isByteSliceOrArray reports whether t is []byte or [N]byte.
+func isByteSliceOrArray(t reflect.Type) bool {
+	return (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) && t.Elem().Kind() == reflect.Uint8
 }
 
 //

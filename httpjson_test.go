@@ -262,6 +262,15 @@ func TestFindExtraKeys(t *testing.T) {
 		Field2 int
 		Nested NestedStruct
 	}
+	type ByteContainer struct {
+		Data []byte
+	}
+	type FixedByteContainer struct {
+		Data [4]byte
+	}
+	type NestedByteContainer struct {
+		Inner ByteContainer
+	}
 	tests := []struct {
 		name   string
 		t      reflect.Type
@@ -301,6 +310,27 @@ func TestFindExtraKeys(t *testing.T) {
 			t:    reflect.TypeOf([]NestedStruct{}),
 			data: "invalid",
 			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct", Field: "", FieldType: "string", FieldValue: "invalid"}},
+		},
+		{
+			name: "Byte slice with string data (base64)",
+			t:    reflect.TypeOf(ByteContainer{}),
+			data: map[string]any{"Data": "aGVsbG8="},
+		},
+		{
+			name: "Byte array with string data (base64)",
+			t:    reflect.TypeOf(FixedByteContainer{}),
+			data: map[string]any{"Data": "aGVsbG8="},
+		},
+		{
+			name: "Byte slice with non-string data",
+			t:    reflect.TypeOf(ByteContainer{}),
+			data: map[string]any{"Data": 42},
+			want: []error{&UnknownFieldError{StructType: "httpjson.ByteContainer", Field: "Data", FieldType: "int", FieldValue: 42}},
+		},
+		{
+			name: "Nested byte slice as string",
+			t:    reflect.TypeOf(NestedByteContainer{}),
+			data: map[string]any{"Inner": map[string]any{"Data": "aGVsbG8="}},
 		},
 		{
 			name: "Valid map with no extra keys",
