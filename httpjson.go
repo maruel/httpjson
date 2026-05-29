@@ -265,17 +265,7 @@ func findExtraKeysGeneric(root, t reflect.Type, value any, prefix string) []erro
 }
 
 func findExtraKeysStruct(root, t reflect.Type, data map[string]any, prefix string) []error {
-	validFields := make(map[string]string, t.NumField())
-	for i := range t.NumField() {
-		// Only consider exported fields.
-		if f := t.Field(i); f.PkgPath == "" {
-			if jsonName := strings.Split(f.Tag.Get("json"), ",")[0]; jsonName == "" {
-				validFields[f.Name] = f.Name
-			} else if jsonName != "-" {
-				validFields[jsonName] = f.Name
-			}
-		}
-	}
+	validFields := collectJSONFields(t)
 	var out []error
 	for key, value := range data {
 		v := key
@@ -294,6 +284,41 @@ func findExtraKeysStruct(root, t reflect.Type, data map[string]any, prefix strin
 		}
 	}
 	return out
+}
+
+// collectJSONFields returns a map from JSON field name to Go field name for a struct type,
+// recursing into anonymous (embedded) fields. Fields with json:"-" tags are skipped.
+func collectJSONFields(t reflect.Type) map[string]string {
+	fields := make(map[string]string, t.NumField())
+	collectJSONFieldsRecursive(t, fields)
+	return fields
+}
+
+func collectJSONFieldsRecursive(t reflect.Type, fields map[string]string) {
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue // unexported
+		}
+		if f.Anonymous {
+			ft := f.Type
+			for ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			collectJSONFieldsRecursive(ft, fields)
+			continue
+		}
+		jsonName := strings.Split(f.Tag.Get("json"), ",")[0]
+		if jsonName == "" {
+			jsonName = f.Name
+		} else if jsonName == "-" {
+			continue
+		}
+		// First declaration wins (direct fields shadow embedded ones).
+		if _, exists := fields[jsonName]; !exists {
+			fields[jsonName] = f.Name
+		}
+	}
 }
 
 func findExtraKeysMap(root, t reflect.Type, data any, prefix string) []error {

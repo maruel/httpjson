@@ -254,6 +254,45 @@ func TestDecodeJSON_error(t *testing.T) {
 }
 
 func TestFindExtraKeys(t *testing.T) {
+	type Base struct {
+		Name  string `json:"Name"`
+		Value int    `json:"Value"`
+	}
+	type EmbeddedStruct struct {
+		Base
+		Extra int `json:"-"`
+	}
+	type ShadowingStruct struct {
+		Base
+		Name string `json:"Name"` // shadows Base.Name
+	}
+	type Labeled struct {
+		Label string `json:"Label"`
+	}
+	type MultiEmbedded struct {
+		Base
+		Labeled
+	}
+	type Middle struct {
+		Labeled
+		Count int `json:"Count"`
+	}
+	type DeepEmbedded struct {
+		Base
+		Middle
+	}
+	type PtrEmbedded struct {
+		*Base
+		Own string `json:"Own"`
+	}
+	type SubType struct {
+		A int `json:"A"`
+		B int `json:"B"`
+	}
+	type ExtraInPromoted struct {
+		Base
+		Sub SubType `json:"Sub"`
+	}
 	type NestedStruct struct {
 		ValidField string
 	}
@@ -370,6 +409,61 @@ func TestFindExtraKeys(t *testing.T) {
 			t:    reflect.TypeOf(TestStruct{}),
 			data: map[string]any{"Field1": "value1", "Nested": "invalid"},
 			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested", FieldType: "string", FieldValue: "invalid"}},
+		},
+		{
+			name: "Embedded struct with promoted fields (no extra)",
+			t:    reflect.TypeOf(EmbeddedStruct{}),
+			data: map[string]any{"Name": "test", "Value": 42},
+		},
+		{
+			name: "Embedded struct with promoted fields (extra)",
+			t:    reflect.TypeOf(EmbeddedStruct{}),
+			data: map[string]any{"Name": "test", "Value": 42, "ExtraField": "bad"},
+			want: []error{&UnknownFieldError{StructType: "httpjson.EmbeddedStruct", Field: "ExtraField", FieldType: "string", FieldValue: "bad"}},
+		},
+		{
+			name: "Embedded struct shadowing (direct field wins)",
+			t:    reflect.TypeOf(ShadowingStruct{}),
+			data: map[string]any{"Name": "direct", "Value": 42},
+		},
+		{
+			name: "Multiple embedded structs",
+			t:    reflect.TypeOf(MultiEmbedded{}),
+			data: map[string]any{"Name": "a", "Value": 1, "Label": "x"},
+		},
+		{
+			name: "Multiple embedded structs (extra field)",
+			t:    reflect.TypeOf(MultiEmbedded{}),
+			data: map[string]any{"Name": "a", "Value": 1, "Label": "x", "Bad": true},
+			want: []error{&UnknownFieldError{StructType: "httpjson.MultiEmbedded", Field: "Bad", FieldType: "bool", FieldValue: true}},
+		},
+		{
+			name: "Deeply embedded struct",
+			t:    reflect.TypeOf(DeepEmbedded{}),
+			data: map[string]any{"Name": "a", "Value": 1, "Label": "x", "Count": 3},
+		},
+		{
+			name: "Deeply embedded struct (extra in middle)",
+			t:    reflect.TypeOf(DeepEmbedded{}),
+			data: map[string]any{"Name": "a", "Value": 1, "Label": "x", "Count": 3, "Bad": true},
+			want: []error{&UnknownFieldError{StructType: "httpjson.DeepEmbedded", Field: "Bad", FieldType: "bool", FieldValue: true}},
+		},
+		{
+			name: "Embedded pointer struct",
+			t:    reflect.TypeOf(PtrEmbedded{}),
+			data: map[string]any{"Name": "a", "Value": 1, "Own": "yes"},
+		},
+		{
+			name: "Embedded pointer struct (extra field)",
+			t:    reflect.TypeOf(PtrEmbedded{}),
+			data: map[string]any{"Name": "a", "Value": 1, "Own": "yes", "Bad": true},
+			want: []error{&UnknownFieldError{StructType: "httpjson.PtrEmbedded", Field: "Bad", FieldType: "bool", FieldValue: true}},
+		},
+		{
+			name: "Extra key inside promoted field value",
+			t:    reflect.TypeOf(ExtraInPromoted{}),
+			data: map[string]any{"Name": "a", "Value": 1, "Sub": map[string]any{"A": 1, "B": 2, "C": 3}},
+			want: []error{&UnknownFieldError{StructType: "httpjson.ExtraInPromoted", Field: "Sub.C", FieldType: "int", FieldValue: 3}},
 		},
 	}
 	for _, tt := range tests {
