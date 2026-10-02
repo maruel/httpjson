@@ -356,6 +356,26 @@ func TestFindExtraKeys(t *testing.T) {
 			data: map[string]any{"Data": "aGVsbG8="},
 		},
 		{
+			name: "RawMessage with object data",
+			t:    reflect.TypeOf(struct{ Data json.RawMessage }{}),
+			data: map[string]any{"Data": map[string]any{"k": 1}},
+		},
+		{
+			name: "RawMessage with array data",
+			t:    reflect.TypeOf(struct{ Data json.RawMessage }{}),
+			data: map[string]any{"Data": []any{1, 2}},
+		},
+		{
+			name: "RawMessage with string data",
+			t:    reflect.TypeOf(struct{ Data json.RawMessage }{}),
+			data: map[string]any{"Data": "raw"},
+		},
+		{
+			name: "Map with nested object data",
+			t:    reflect.TypeOf(struct{ Data map[string]any }{}),
+			data: map[string]any{"Data": map[string]any{"k": map[string]any{"n": 1}}},
+		},
+		{
 			name: "Byte array with string data (base64)",
 			t:    reflect.TypeOf(FixedByteContainer{}),
 			data: map[string]any{"Data": "aGVsbG8="},

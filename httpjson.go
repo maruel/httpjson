@@ -250,10 +250,12 @@ func findExtraKeysGeneric(root, t reflect.Type, value any, prefix string) []erro
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Uintptr, reflect.Float32, reflect.Float64,
 		reflect.Complex64, reflect.Complex128,
-		reflect.String:
-		// TODO: Confirm the type.
+		reflect.String,
+		reflect.Interface:
+		// TODO: Confirm the type. Interface fields hold any JSON value, the declared type opted out of strict
+		// checking.
 		return nil
-	// case reflect.Chan, reflect.Func, reflect.Interface, reflect.UnsafePointer:
+	// case reflect.Chan, reflect.Func, reflect.UnsafePointer:
 	default:
 		return []error{&UnknownFieldError{
 			StructType: root.String(),
@@ -340,7 +342,7 @@ func findExtraKeysMap(root, t reflect.Type, data any, prefix string) []error {
 			out = append(out, fmt.Errorf("invalid json: %s[%q] is not a valid JSON key; type %s, must be string", prefix, key.String(), key.Type()))
 		}
 		v := d2.MapIndex(key)
-		out = append(out, findExtraKeysGeneric(root, vt, v, prefix+fmt.Sprintf("[%s]", key))...)
+		out = append(out, findExtraKeysGeneric(root, vt, v.Interface(), prefix+fmt.Sprintf("[%s]", key))...)
 	}
 	return out
 }
@@ -351,8 +353,11 @@ func findExtraKeysSlice(root, t reflect.Type, data any, prefix string) []error {
 		// []byte fields are decoded by json.Unmarshal into map[string]any as
 		// a string (base64), not as a slice. Accept a string when the target
 		// is []byte or [N]byte.
-		if d2.Kind() == reflect.String && isByteSliceOrArray(t) {
-			return nil
+		if isByteSliceOrArray(t) {
+			// json.RawMessage holds raw JSON of any kind.
+			if t == reflect.TypeFor[json.RawMessage]() || d2.Kind() == reflect.String {
+				return nil
+			}
 		}
 		return []error{
 			&UnknownFieldError{
