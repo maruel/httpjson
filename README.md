@@ -25,6 +25,18 @@ normalized structured response schema.
 [![Go Reference](https://pkg.go.dev/badge/github.com/maruel/httpjson/.svg)](https://pkg.go.dev/github.com/maruel/httpjson/)
 [![codecov](https://codecov.io/gh/maruel/httpjson/graph/badge.svg?token=EK9DS17M02)](https://codecov.io/gh/maruel/httpjson)
 
+## Development
+
+Use the Go version specified in `go.mod`.
+
+- `make verify` runs the static checks with pinned Go tools.
+- `make fix` applies lint and formatting fixes.
+- `make test` runs the tests.
+- `make build` builds all packages.
+
+CI also checks coverage, benchmarks, generated files, and module tidiness on
+Linux, macOS, and Windows.
+
 ## Usage
 
 Strictly handle JSON replies.

@@ -17,6 +17,9 @@ import (
 	"strings"
 )
 
+// DefaultClient uses http.DefaultClient and refuses unknown fields, returning *UnknownFieldError on them.
+var DefaultClient = Client{}
+
 // Client is a JSON REST HTTP client using good default behavior.
 type Client struct {
 	// Client defaults to http.DefaultClient. Override with http.RoundTripper to
@@ -34,9 +37,6 @@ type Client struct {
 
 	_ struct{}
 }
-
-// DefaultClient uses http.DefaultClient and refuses unknown fields, returning *UnknownFieldError on them.
-var DefaultClient = Client{}
 
 // Get simplifies doing an HTTP GET in JSON. Returns *Error on failure.
 //
@@ -80,7 +80,7 @@ func (c *Client) Post(ctx context.Context, url string, hdr http.Header, in, out 
 func (c *Client) PostRequest(ctx context.Context, url string, hdr http.Header, in any) (*http.Response, error) {
 	if in == nil {
 		// Catch inattentionnal nil.
-		return nil, fmt.Errorf("in is nil")
+		return nil, errors.New("in is nil")
 	}
 	return c.Request(ctx, "POST", url, hdr, in)
 }
@@ -132,6 +132,20 @@ func (c *Client) Do(req *http.Request, hdr http.Header) (*http.Response, error) 
 	return client.Do(req)
 }
 
+func (c *Client) decodeResponse(resp *http.Response, out any) error {
+	b, err := io.ReadAll(resp.Body)
+	if err2 := resp.Body.Close(); err == nil {
+		err = err2
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read server response: %w", err)
+	}
+	if err = decodeJSON(b, out, c.Lenient); err != nil {
+		return errors.Join(err, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status, PrintBody: true})
+	}
+	return nil
+}
+
 // DecodeResponse parses the response body as JSON, trying strict decoding for
 // each of the output struct passed in, falling back as the decoding fails. It
 // then closes the response body.
@@ -164,20 +178,6 @@ func DecodeResponse(resp *http.Response, out ...any) (int, error) {
 		errs = append(errs, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status, PrintBody: len(errs) != 0})
 	}
 	return res, errors.Join(errs...)
-}
-
-func (c *Client) decodeResponse(resp *http.Response, out any) error {
-	b, err := io.ReadAll(resp.Body)
-	if err2 := resp.Body.Close(); err == nil {
-		err = err2
-	}
-	if err != nil {
-		return fmt.Errorf("failed to read server response: %w", err)
-	}
-	if err = decodeJSON(b, out, c.Lenient); err != nil {
-		return errors.Join(err, &Error{ResponseBody: b, StatusCode: resp.StatusCode, Status: resp.Status, PrintBody: true})
-	}
-	return nil
 }
 
 func decodeJSON(b []byte, out any, lenient bool) error {

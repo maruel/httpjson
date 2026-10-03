@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -43,7 +44,9 @@ func TestClient_Get_header(t *testing.T) {
 				t.Errorf("Unexpected\nwant: %v\ngot:  %v", "value", h)
 			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.Write([]byte("null"))
+			if _, err := w.Write([]byte("null")); err != nil {
+				t.Error(err)
+			}
 		}))
 		defer ts.Close()
 
@@ -60,7 +63,9 @@ func TestClient_Get_header(t *testing.T) {
 				t.Errorf("got %q", v)
 			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.Write([]byte("null"))
+			if _, err := w.Write([]byte("null")); err != nil {
+				t.Error(err)
+			}
 		}))
 		defer ts.Close()
 
@@ -82,7 +87,9 @@ func TestClient_Get_error_bad_decode(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Write([]byte(`not json`))
+		if _, err := w.Write([]byte(`not json`)); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer ts.Close()
 	var out struct {
@@ -110,7 +117,9 @@ func TestClient_Get_error_decode_unexpected_field(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Write([]byte(`{"output":"data"}`))
+		if _, err := w.Write([]byte(`{"output":"data"}`)); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer ts.Close()
 
@@ -496,13 +505,5 @@ func TestFindExtraKeys(t *testing.T) {
 }
 
 func errorsEqual(a, b []error) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Error() != b[i].Error() {
-			return false
-		}
-	}
-	return true
+	return slices.EqualFunc(a, b, func(x, y error) bool { return x.Error() == y.Error() })
 }
