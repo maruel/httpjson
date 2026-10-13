@@ -1,2 +1,11 @@
+/.ruff_cache/
+/.venv/
+/codecov
 /codecov*
+/codecov.SHA256SUM
+/codecov.SHA256SUM.sig
+/codecov.exe
+/codecov.exe.SHA256SUM
+/codecov.exe.SHA256SUM.sig
 /cover.cov
+/coverage.txt

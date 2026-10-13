@@ -2,6 +2,8 @@
 // Use of this source code is governed under the Apache License, Version 2.0
 // that can be found in the LICENSE file.
 
+// Demonstrate HTTP JSON requests.
+
 package httpjson_test
 
 import (
