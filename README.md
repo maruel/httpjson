@@ -32,7 +32,6 @@ Use the Go version specified in `go.mod`.
 - `make verify` runs the static checks with pinned Go tools.
 - `make fix` applies lint and formatting fixes.
 - `make test` runs the tests.
-- `make build` builds all packages.
 
 CI also checks coverage, benchmarks, generated files, and module tidiness on
 Linux, macOS, and Windows.
