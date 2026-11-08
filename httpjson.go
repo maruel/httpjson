@@ -297,8 +297,7 @@ func collectJSONFields(t reflect.Type) map[string]string {
 }
 
 func collectJSONFieldsRecursive(t reflect.Type, fields map[string]string) {
-	for i := range t.NumField() {
-		f := t.Field(i)
+	for f := range t.Fields() {
 		if f.PkgPath != "" {
 			continue // unexported
 		}
@@ -310,7 +309,7 @@ func collectJSONFieldsRecursive(t reflect.Type, fields map[string]string) {
 			collectJSONFieldsRecursive(ft, fields)
 			continue
 		}
-		jsonName := strings.Split(f.Tag.Get("json"), ",")[0]
+		jsonName, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 		if jsonName == "" {
 			jsonName = f.Name
 		} else if jsonName == "-" {

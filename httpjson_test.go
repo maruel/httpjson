@@ -100,12 +100,10 @@ func TestClient_Get_error_bad_decode(t *testing.T) {
 	c := Client{}
 	err := c.Get(context.Background(), ts.URL, nil, &out)
 	if err != nil {
-		var herr *Error
-		if !errors.As(err, &herr) {
+		if _, ok := errors.AsType[*Error](err); !ok {
 			t.Error("expected Error")
 		}
-		var jerr *json.SyntaxError
-		if !errors.As(err, &jerr) {
+		if _, ok := errors.AsType[*json.SyntaxError](err); !ok {
 			t.Error("expected json.SyntaxError")
 		}
 		want := "invalid character 'o' in literal null (expecting 'u')\nhttp 200\nnot json"
@@ -130,12 +128,10 @@ func TestClient_Get_error_decode_unexpected_field(t *testing.T) {
 	}
 	c := Client{}
 	if err := c.Get(context.Background(), ts.URL, nil, &out); err != nil {
-		var herr *json.SyntaxError
-		if errors.As(err, &herr) {
+		if herr, ok := errors.AsType[*json.SyntaxError](err); ok {
 			t.Error("unexpected Error", herr)
 		}
-		var jerr *json.SyntaxError
-		if errors.As(err, &jerr) {
+		if jerr, ok := errors.AsType[*json.SyntaxError](err); ok {
 			t.Error("unexpected json.SyntaxError", jerr)
 		}
 		want := "unknown field *struct { Different string \"json:\\\"different\\\"\" }.output of type string with value \"data\"\nhttp 200\n{\"output\":\"data\"}"
@@ -220,7 +216,7 @@ func TestDecodeJSON_error(t *testing.T) {
 			FieldC string
 		} `json:"unnamed_array"`
 	}
-	example := reflect.TypeOf(Example{})
+	example := reflect.TypeFor[Example]()
 	t.Run("root", func(t *testing.T) {
 		data := map[string]any{
 			"name":    "John",
@@ -271,10 +267,12 @@ func TestFindExtraKeys(t *testing.T) {
 	}
 	type EmbeddedStruct struct {
 		Base
+
 		Extra int `json:"-"`
 	}
 	type ShadowingStruct struct {
 		Base
+
 		Name string `json:"Name"` // shadows Base.Name
 	}
 	type Labeled struct {
@@ -286,6 +284,7 @@ func TestFindExtraKeys(t *testing.T) {
 	}
 	type Middle struct {
 		Labeled
+
 		Count int `json:"Count"`
 	}
 	type DeepEmbedded struct {
@@ -294,6 +293,7 @@ func TestFindExtraKeys(t *testing.T) {
 	}
 	type PtrEmbedded struct {
 		*Base
+
 		Own string `json:"Own"`
 	}
 	type SubType struct {
@@ -302,6 +302,7 @@ func TestFindExtraKeys(t *testing.T) {
 	}
 	type ExtraInPromoted struct {
 		Base
+
 		Sub SubType `json:"Sub"`
 	}
 	type NestedStruct struct {
@@ -330,40 +331,40 @@ func TestFindExtraKeys(t *testing.T) {
 	}{
 		{
 			name: "Valid nil",
-			t:    reflect.TypeOf([]NestedStruct{}),
+			t:    reflect.TypeFor[[]NestedStruct](),
 			data: nil,
 		},
 		{
 			name: "Valid slice with no extra keys",
-			t:    reflect.TypeOf([]NestedStruct{}),
+			t:    reflect.TypeFor[[]NestedStruct](),
 			data: []map[string]any{{"ValidField": "value1"}, {"ValidField": "value2"}},
 		},
 		{
 			name: "Valid slice with no extra keys (ptr)",
-			t:    reflect.TypeOf([]*NestedStruct{}),
+			t:    reflect.TypeFor[[]*NestedStruct](),
 			data: []map[string]any{{"ValidField": "value1"}, {"ValidField": "value2"}},
 		},
 		{
 			name: "Slice with extra keys",
-			t:    reflect.TypeOf([]NestedStruct{}),
+			t:    reflect.TypeFor[[]NestedStruct](),
 			data: []map[string]any{{"ValidField": "value1", "ExtraField": "extra"}},
 			// Technically the '.' is incorrect. It comes from reflect.Type.String().
 			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct.[0]", Field: "ExtraField", FieldType: "string", FieldValue: "extra"}},
 		},
 		{
 			name: "Empty slice",
-			t:    reflect.TypeOf([]NestedStruct{}),
+			t:    reflect.TypeFor[[]NestedStruct](),
 			data: []map[string]any{},
 		},
 		{
 			name: "Non-slice data",
-			t:    reflect.TypeOf([]NestedStruct{}),
+			t:    reflect.TypeFor[[]NestedStruct](),
 			data: "invalid",
 			want: []error{&UnknownFieldError{StructType: "[]httpjson.NestedStruct", Field: "", FieldType: "string", FieldValue: "invalid"}},
 		},
 		{
 			name: "Byte slice with string data (base64)",
-			t:    reflect.TypeOf(ByteContainer{}),
+			t:    reflect.TypeFor[ByteContainer](),
 			data: map[string]any{"Data": "aGVsbG8="},
 		},
 		{
@@ -388,111 +389,111 @@ func TestFindExtraKeys(t *testing.T) {
 		},
 		{
 			name: "Byte array with string data (base64)",
-			t:    reflect.TypeOf(FixedByteContainer{}),
+			t:    reflect.TypeFor[FixedByteContainer](),
 			data: map[string]any{"Data": "aGVsbG8="},
 		},
 		{
 			name: "Byte slice with non-string data",
-			t:    reflect.TypeOf(ByteContainer{}),
+			t:    reflect.TypeFor[ByteContainer](),
 			data: map[string]any{"Data": 42},
 			want: []error{&UnknownFieldError{StructType: "httpjson.ByteContainer", Field: "Data", FieldType: "int", FieldValue: 42}},
 		},
 		{
 			name: "Nested byte slice as string",
-			t:    reflect.TypeOf(NestedByteContainer{}),
+			t:    reflect.TypeFor[NestedByteContainer](),
 			data: map[string]any{"Inner": map[string]any{"Data": "aGVsbG8="}},
 		},
 		{
 			name: "Valid map with no extra keys",
-			t:    reflect.TypeOf(TestStruct{}),
+			t:    reflect.TypeFor[TestStruct](),
 			data: map[string]any{"Field1": "value1", "Field2": 42, "Nested": map[string]any{"ValidField": "nestedValue"}},
 		},
 		{
 			name: "Inconsistent map",
-			t:    reflect.TypeOf(map[string]string{}),
+			t:    reflect.TypeFor[map[string]string](),
 			data: map[string]any{"str": "foo", "int": 42},
 		},
 		{
 			name: "Inconsistent map",
-			t:    reflect.TypeOf(map[string]string{}),
+			t:    reflect.TypeFor[map[string]string](),
 			data: []any{"str", 42},
 			want: []error{&UnknownFieldError{StructType: "map[string]string", Field: "", FieldType: "[]interface {}", FieldValue: []any{"str", 42}}},
 		},
 		{
 			name: "Map with extra keys at top level",
-			t:    reflect.TypeOf(TestStruct{}),
+			t:    reflect.TypeFor[TestStruct](),
 			data: map[string]any{"Field1": "value1", "ExtraField": "extra"},
 			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "ExtraField", FieldType: "string", FieldValue: "extra"}},
 		},
 		{
 			name: "Map with extra keys in nested struct",
-			t:    reflect.TypeOf(TestStruct{}),
+			t:    reflect.TypeFor[TestStruct](),
 			data: map[string]any{"Field1": "value1", "Nested": map[string]any{"ValidField": "nestedValue", "ExtraNestedField": "extra"}},
 			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested.ExtraNestedField", FieldType: "string", FieldValue: "extra"}},
 		},
 		{
 			name: "Empty map",
-			t:    reflect.TypeOf(TestStruct{}),
+			t:    reflect.TypeFor[TestStruct](),
 			data: map[string]any{},
 		},
 		{
 			name: "Map with invalid nested type",
-			t:    reflect.TypeOf(TestStruct{}),
+			t:    reflect.TypeFor[TestStruct](),
 			data: map[string]any{"Field1": "value1", "Nested": "invalid"},
 			want: []error{&UnknownFieldError{StructType: "httpjson.TestStruct", Field: "Nested", FieldType: "string", FieldValue: "invalid"}},
 		},
 		{
 			name: "Embedded struct with promoted fields (no extra)",
-			t:    reflect.TypeOf(EmbeddedStruct{}),
+			t:    reflect.TypeFor[EmbeddedStruct](),
 			data: map[string]any{"Name": "test", "Value": 42},
 		},
 		{
 			name: "Embedded struct with promoted fields (extra)",
-			t:    reflect.TypeOf(EmbeddedStruct{}),
+			t:    reflect.TypeFor[EmbeddedStruct](),
 			data: map[string]any{"Name": "test", "Value": 42, "ExtraField": "bad"},
 			want: []error{&UnknownFieldError{StructType: "httpjson.EmbeddedStruct", Field: "ExtraField", FieldType: "string", FieldValue: "bad"}},
 		},
 		{
 			name: "Embedded struct shadowing (direct field wins)",
-			t:    reflect.TypeOf(ShadowingStruct{}),
+			t:    reflect.TypeFor[ShadowingStruct](),
 			data: map[string]any{"Name": "direct", "Value": 42},
 		},
 		{
 			name: "Multiple embedded structs",
-			t:    reflect.TypeOf(MultiEmbedded{}),
+			t:    reflect.TypeFor[MultiEmbedded](),
 			data: map[string]any{"Name": "a", "Value": 1, "Label": "x"},
 		},
 		{
 			name: "Multiple embedded structs (extra field)",
-			t:    reflect.TypeOf(MultiEmbedded{}),
+			t:    reflect.TypeFor[MultiEmbedded](),
 			data: map[string]any{"Name": "a", "Value": 1, "Label": "x", "Bad": true},
 			want: []error{&UnknownFieldError{StructType: "httpjson.MultiEmbedded", Field: "Bad", FieldType: "bool", FieldValue: true}},
 		},
 		{
 			name: "Deeply embedded struct",
-			t:    reflect.TypeOf(DeepEmbedded{}),
+			t:    reflect.TypeFor[DeepEmbedded](),
 			data: map[string]any{"Name": "a", "Value": 1, "Label": "x", "Count": 3},
 		},
 		{
 			name: "Deeply embedded struct (extra in middle)",
-			t:    reflect.TypeOf(DeepEmbedded{}),
+			t:    reflect.TypeFor[DeepEmbedded](),
 			data: map[string]any{"Name": "a", "Value": 1, "Label": "x", "Count": 3, "Bad": true},
 			want: []error{&UnknownFieldError{StructType: "httpjson.DeepEmbedded", Field: "Bad", FieldType: "bool", FieldValue: true}},
 		},
 		{
 			name: "Embedded pointer struct",
-			t:    reflect.TypeOf(PtrEmbedded{}),
+			t:    reflect.TypeFor[PtrEmbedded](),
 			data: map[string]any{"Name": "a", "Value": 1, "Own": "yes"},
 		},
 		{
 			name: "Embedded pointer struct (extra field)",
-			t:    reflect.TypeOf(PtrEmbedded{}),
+			t:    reflect.TypeFor[PtrEmbedded](),
 			data: map[string]any{"Name": "a", "Value": 1, "Own": "yes", "Bad": true},
 			want: []error{&UnknownFieldError{StructType: "httpjson.PtrEmbedded", Field: "Bad", FieldType: "bool", FieldValue: true}},
 		},
 		{
 			name: "Extra key inside promoted field value",
-			t:    reflect.TypeOf(ExtraInPromoted{}),
+			t:    reflect.TypeFor[ExtraInPromoted](),
 			data: map[string]any{"Name": "a", "Value": 1, "Sub": map[string]any{"A": 1, "B": 2, "C": 3}},
 			want: []error{&UnknownFieldError{StructType: "httpjson.ExtraInPromoted", Field: "Sub.C", FieldType: "int", FieldValue: 3}},
 		},

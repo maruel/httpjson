@@ -111,12 +111,10 @@ func ExampleClient_Get() {
 	}
 	if err := httpjson.DefaultClient.Get(context.Background(), ts.URL+"?question=weather", nil, &out); err != nil {
 		// Handle various kinds of errors.
-		var herr *httpjson.Error
-		if errors.As(err, &herr) {
+		if herr, ok := errors.AsType[*httpjson.Error](err); ok {
 			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
 		}
-		var jerr *json.SyntaxError
-		if errors.As(err, &jerr) {
+		if jerr, ok := errors.AsType[*json.SyntaxError](err); ok {
 			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
 		}
 		// Print the error as a generic error.
@@ -149,18 +147,15 @@ func ExampleClient_GetRequest() {
 		fmt.Printf("Success case: %s\n", out.Message)
 	case 1:
 		fmt.Printf("Fallback: %s\n", fallback.Error)
-		var herr *httpjson.Error
-		if errors.As(err, &herr) {
+		if herr, ok := errors.AsType[*httpjson.Error](err); ok {
 			fmt.Printf("httpjson.Error: %v", herr)
 		}
 	case -1:
 		// No decoding happened. Handle various kinds of errors.
-		var herr *httpjson.Error
-		if errors.As(err, &herr) {
+		if herr, ok := errors.AsType[*httpjson.Error](err); ok {
 			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
 		}
-		var jerr *json.SyntaxError
-		if errors.As(err, &jerr) {
+		if jerr, ok := errors.AsType[*json.SyntaxError](err); ok {
 			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
 		}
 		fmt.Printf("Error: %s\n", err)
@@ -244,12 +239,10 @@ func ExampleClient_PostRequest() {
 		fmt.Printf("Structured Error: %s\n", fallback.Error)
 	case -1:
 		// No decoding happened. Handle various kinds of errors.
-		var herr *httpjson.Error
-		if errors.As(err, &herr) {
+		if herr, ok := errors.AsType[*httpjson.Error](err); ok {
 			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
 		}
-		var jerr *json.SyntaxError
-		if errors.As(err, &jerr) {
+		if jerr, ok := errors.AsType[*json.SyntaxError](err); ok {
 			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
 		}
 		fmt.Printf("Error: %s\n", err)
@@ -285,12 +278,10 @@ func ExampleClient_Request() {
 		fmt.Printf("Success case: %s\n", out["message"])
 	case -1:
 		// No decoding happened. Handle various kinds of errors.
-		var herr *httpjson.Error
-		if errors.As(err, &herr) {
+		if herr, ok := errors.AsType[*httpjson.Error](err); ok {
 			fmt.Printf("httpjson.Error: body=%q code=%d", herr.ResponseBody, herr.StatusCode)
 		}
-		var jerr *json.SyntaxError
-		if errors.As(err, &jerr) {
+		if jerr, ok := errors.AsType[*json.SyntaxError](err); ok {
 			fmt.Printf("json.SyntaxError: offset=%d", jerr.Offset)
 		}
 		fmt.Printf("Error: %s\n", err)
